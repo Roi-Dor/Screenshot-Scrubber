@@ -20,14 +20,25 @@
         android:layout_height="wrap_content"
         android:text="Start Monitoring"
         android:textSize="18sp"
-        android:padding="16dp" />
+        android:padding="16dp"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/testDataButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Open Test Screen"
+        android:textSize="16sp"
+        android:padding="12dp"
+        android:backgroundTint="#4CAF50" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Take a screenshot to test detection"
+        android:text="1. Start monitoring\n2. Open test screen\n3. Take a screenshot\n4. Check results"
         android:textSize="14sp"
-        android:layout_marginTop="16dp"
-        android:textColor="#666666" />
+        android:layout_marginTop="24dp"
+        android:textColor="#666666"
+        android:gravity="center" />
 
 </LinearLayout>

@@ -32,6 +32,9 @@ android {
 }
 
 dependencies {
+    // ML Kit Text Recognition
+    implementation ("com.google.mlkit:text-recognition:16.0.1")
+    // Library
     implementation (project(":screenscrubber"))
 
     implementation(libs.appcompat)
