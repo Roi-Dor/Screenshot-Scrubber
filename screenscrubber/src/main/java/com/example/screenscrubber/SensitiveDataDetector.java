@@ -27,7 +27,7 @@ public class SensitiveDataDetector {
 
     // SSN pattern: XXX-XX-XXXX
     private static final Pattern SSN_PATTERN =
-            Pattern.compile("\"\\\\b\\\\d{3}-?\\\\d{2}-?\\\\d{4}\\\\b\"");
+            Pattern.compile("\\b\\d{3}-?\\d{2}-?\\d{4}\\b");
 
     // Phone number pattern: various formats
     private static final Pattern PHONE_PATTERN =

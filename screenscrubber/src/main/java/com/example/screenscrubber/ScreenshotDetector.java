@@ -21,24 +21,33 @@ public class ScreenshotDetector {
     public void startDetection(Context context, ScreenshotListener listener) {
         this.listener = listener;
 
-        // Get screenshot directory
-        String screenshotPath = Environment.getExternalStorageDirectory() +
-                "/DCIM/Screenshots/";
+        // Primary screenshot directory (Samsung, most devices)
+        String screenshotPath = Environment.getExternalStorageDirectory() + "/DCIM/Screenshots/";
 
         File screenshotDir = new File(screenshotPath);
+
+        // If DCIM/Screenshots doesn't exist, try Pictures/Screenshots (some devices)
         if (!screenshotDir.exists()) {
-            // Try alternative path
-            screenshotPath = Environment.getExternalStorageDirectory() +
-                    "/Pictures/Screenshots/";
+            screenshotPath = Environment.getExternalStorageDirectory() + "/Pictures/Screenshots/";
+            screenshotDir = new File(screenshotPath);
+
+            // Create the directory if it doesn't exist
+            if (!screenshotDir.exists()) {
+                screenshotDir.mkdirs();
+            }
         }
 
         Log.d(TAG, "Monitoring screenshot directory: " + screenshotPath);
+        Log.d(TAG, "Directory exists: " + screenshotDir.exists());
+        Log.d(TAG, "Directory can read: " + screenshotDir.canRead());
 
         final String finalScreenshotPath = screenshotPath;
 
         fileObserver = new FileObserver(screenshotPath, FileObserver.CREATE | FileObserver.MOVED_TO) {
             @Override
             public void onEvent(int event, String fileName) {
+                Log.d(TAG, "FileObserver event: " + event + ", fileName: " + fileName);
+
                 if (fileName != null &&
                         fileName.toLowerCase().contains("screenshot") &&
                         !fileName.startsWith(".pending") &&
@@ -47,34 +56,43 @@ public class ScreenshotDetector {
                     String fullPath = finalScreenshotPath + fileName;
                     Log.d(TAG, "Screenshot detected: " + fullPath);
 
-                    // Wait a bit for file to be fully written and permissions to be set
+                    // Shorter initial delay for better UX
                     handler.postDelayed(() -> {
                         processScreenshotWithRetry(fullPath, 0);
-                    }, 500); // 500ms delay
+                    }, 500); // Reduced to 500ms
                 }
             }
         };
 
-        fileObserver.startWatching();
-        Log.d(TAG, "Screenshot detection started");
+        try {
+            fileObserver.startWatching();
+            Log.d(TAG, "Screenshot detection started successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start file observer", e);
+        }
     }
 
     private void processScreenshotWithRetry(String filePath, int attempt) {
         File file = new File(filePath);
 
-        if (file.exists() && file.canRead()) {
+        Log.d(TAG, "Processing attempt " + (attempt + 1) + " for: " + filePath);
+        Log.d(TAG, "File exists: " + file.exists() + ", can read: " + file.canRead() + ", size: " + file.length());
+
+        // Check if file exists, is readable, and has content
+        if (file.exists() && file.canRead() && file.length() > 0) {
             Log.d(TAG, "Screenshot ready for processing: " + filePath);
             if (listener != null) {
                 listener.onScreenshotTaken(filePath);
             }
-        } else if (attempt < 3) {
-            // Retry up to 3 times with increasing delay
-            Log.d(TAG, "Screenshot not ready, retrying in " + (1000 * (attempt + 1)) + "ms");
+        } else if (attempt < 3) { // Reduced retry attempts
+            // Retry with shorter delays
+            int delay = 500 * (attempt + 1); // 500ms, 1s, 1.5s
+            Log.d(TAG, "Screenshot not ready, retrying in " + delay + "ms");
             handler.postDelayed(() -> {
                 processScreenshotWithRetry(filePath, attempt + 1);
-            }, 1000 * (attempt + 1));
+            }, delay);
         } else {
-            Log.e(TAG, "Screenshot file not accessible after retries: " + filePath);
+            Log.e(TAG, "Screenshot file not accessible after " + (attempt + 1) + " retries: " + filePath);
         }
     }
 

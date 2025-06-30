@@ -9,28 +9,31 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import java.io.File;
-import java.util.List;
 
+/**
+ * Responsible ONLY for extracting text from images using ML Kit
+ * Does NOT handle sensitive data detection or image processing
+ */
 public class TextRecognitionService {
     private static final String TAG = "TextRecognitionService";
     private TextRecognizer recognizer;
-    private SensitiveDataDetector sensitiveDataDetector;
 
-    public interface TextAnalysisCallback {
-        void onAnalysisComplete(List<SensitiveDataDetector.SensitiveMatch> sensitiveData);
-        void onAnalysisError(String error);
+    public interface TextExtractionCallback {
+        void onTextExtracted(Text visionText, String imagePath);
+        void onExtractionError(String error, String imagePath);
     }
 
     public TextRecognitionService() {
-        // Initialize ML Kit text recognizer
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-        sensitiveDataDetector = new SensitiveDataDetector();
     }
 
-    public void analyzeScreenshot(String imagePath, TextAnalysisCallback callback) {
+    /**
+     * Extract text from image - that's all this class does
+     */
+    public void extractTextFromImage(String imagePath, TextExtractionCallback callback) {
         if (imagePath == null || callback == null) {
             if (callback != null) {
-                callback.onAnalysisError("Invalid parameters");
+                callback.onExtractionError("Invalid parameters", imagePath);
             }
             return;
         }
@@ -39,13 +42,13 @@ public class TextRecognitionService {
             // Load image from file
             File imageFile = new File(imagePath);
             if (!imageFile.exists()) {
-                callback.onAnalysisError("Image file not found: " + imagePath);
+                callback.onExtractionError("Image file not found", imagePath);
                 return;
             }
 
             Bitmap bitmap = BitmapFactory.decodeFile(imagePath);
             if (bitmap == null) {
-                callback.onAnalysisError("Could not decode image");
+                callback.onExtractionError("Could not decode image", imagePath);
                 return;
             }
 
@@ -55,60 +58,17 @@ public class TextRecognitionService {
             // Process with ML Kit
             recognizer.process(image)
                     .addOnSuccessListener(visionText -> {
-                        processTextResult(visionText, callback);
+                        Log.d(TAG, "Text extraction complete for: " + imagePath);
+                        callback.onTextExtracted(visionText, imagePath);
                     })
                     .addOnFailureListener(e -> {
                         Log.e(TAG, "Text recognition failed", e);
-                        callback.onAnalysisError("Text recognition failed: " + e.getMessage());
+                        callback.onExtractionError("Text recognition failed: " + e.getMessage(), imagePath);
                     });
 
         } catch (Exception e) {
-            Log.e(TAG, "Error analyzing screenshot", e);
-            callback.onAnalysisError("Analysis error: " + e.getMessage());
-        }
-    }
-
-    private void processTextResult(Text visionText, TextAnalysisCallback callback) {
-        String fullText = visionText.getText();
-        Log.d(TAG, "Extracted text: " + fullText);
-
-        if (fullText.isEmpty()) {
-            Log.d(TAG, "No text found in image");
-            callback.onAnalysisComplete(List.of()); // Empty list
-            return;
-        }
-
-        // Detect sensitive data
-        List<SensitiveDataDetector.SensitiveMatch> sensitiveMatches =
-                sensitiveDataDetector.detectSensitiveData(fullText);
-
-        Log.d(TAG, "Found " + sensitiveMatches.size() + " sensitive data matches");
-
-        for (SensitiveDataDetector.SensitiveMatch match : sensitiveMatches) {
-            Log.d(TAG, "Sensitive data detected - Type: " + match.type +
-                    ", Value: " + maskSensitiveValue(match.value, match.type));
-        }
-
-        callback.onAnalysisComplete(sensitiveMatches);
-    }
-
-    private String maskSensitiveValue(String value, String type) {
-        // Mask sensitive values for logging
-        switch (type) {
-            case "CREDIT_CARD":
-                return value.substring(0, 4) + " **** **** " + value.substring(value.length() - 4);
-            case "SSN":
-                return "***-**-" + value.substring(value.length() - 4);
-            case "PHONE":
-                return "***-***-" + value.substring(value.length() - 4);
-            case "EMAIL":
-                int atIndex = value.indexOf('@');
-                if (atIndex > 2) {
-                    return value.substring(0, 2) + "***" + value.substring(atIndex);
-                }
-                return "***" + value.substring(atIndex);
-            default:
-                return "***";
+            Log.e(TAG, "Error extracting text", e);
+            callback.onExtractionError("Extraction error: " + e.getMessage(), imagePath);
         }
     }
 
