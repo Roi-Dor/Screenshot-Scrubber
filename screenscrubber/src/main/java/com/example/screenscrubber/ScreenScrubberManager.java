@@ -13,6 +13,7 @@ public class ScreenScrubberManager {
     private ScreenshotDetector detector;
     private TextRecognitionService textService;
     private ScreenshotProcessor screenshotProcessor;
+    private NotificationHelper notificationHelper;  // ADD THIS LINE
     private Context context;
 
     public ScreenScrubberManager(Context context) {
@@ -20,7 +21,8 @@ public class ScreenScrubberManager {
         this.detector = new ScreenshotDetector();
         this.textService = new TextRecognitionService();
         this.screenshotProcessor = new ScreenshotProcessor();
-        this.screenshotProcessor.setContext(context); // Pass context for MediaStore deletion
+        this.screenshotProcessor.setContext(context);
+        this.notificationHelper = new NotificationHelper(context);  // ADD THIS LINE
     }
 
     public void startMonitoring() {
@@ -28,7 +30,7 @@ public class ScreenScrubberManager {
             @Override
             public void onScreenshotTaken(String filePath) {
                 Log.i(TAG, "Processing screenshot: " + filePath);
-                showToast("🔍 Analyzing screenshot for sensitive data...");
+                // REMOVE THIS LINE: showToast("🔍 Analyzing screenshot for sensitive data...");
                 processScreenshot(filePath);
             }
         });
@@ -49,50 +51,40 @@ public class ScreenScrubberManager {
             @Override
             public void onTextExtracted(com.google.mlkit.vision.text.Text visionText, String imagePath) {
                 Log.d(TAG, "Step 2: Processing screenshot with extracted text");
-                showToast("📝 Text extracted, checking for sensitive data...");
+                // REMOVE THIS LINE: showToast("📝 Text extracted, checking for sensitive data...");
 
-                // Step 2: Process the screenshot (detect sensitive data, censor, save/delete)
+                // Step 2: Process the screenshot
                 ScreenshotProcessor.ProcessingResult result = screenshotProcessor.processScreenshot(imagePath, visionText);
 
-                // Step 3: Inform user
+                // Step 3: Show notification instead of toast
                 handleProcessingResult(result);
             }
 
             @Override
             public void onExtractionError(String error, String imagePath) {
                 Log.e(TAG, "Text extraction failed: " + error);
+                // Keep toast for errors only
                 showToast("❌ Screenshot analysis failed: " + error);
             }
         });
     }
 
     /**
-     * Handle the final result and inform user
+     * Handle the final result and show notification
      */
     private void handleProcessingResult(ScreenshotProcessor.ProcessingResult result) {
         if (!result.hasSensitiveData) {
             Log.d(TAG, "No sensitive data found");
-            showToast("✅ Screenshot is clean - no sensitive data detected");
+            // REPLACE TOAST WITH NOTIFICATION:
+            notificationHelper.showCleanScreenshotNotification();
         } else {
             Log.w(TAG, "Sensitive data detected and processed");
-
-            StringBuilder message = new StringBuilder("⚠️ Sensitive data found and censored:\n");
-            for (SensitiveDataDetector.SensitiveMatch match : result.sensitiveMatches) {
-                message.append("• ").append(match.type).append("\n");
-            }
-
-            if (result.censoredImagePath != null) {
-                message.append("\n✅ Safe version saved to Pictures/ScreenScrubber_Censored");
-                message.append("\n🗑️ Original screenshot deleted");
-                Log.i(TAG, "Censored image saved: " + result.censoredImagePath);
-            } else {
-                message.append("\n❌ Could not save censored version");
-            }
-
-            showToast(message.toString());
+            // REPLACE TOAST WITH NOTIFICATION:
+            notificationHelper.showSensitiveDataAlert(result.sensitiveMatches);
         }
     }
 
+    // Keep this method for error messages only
     private void showToast(String message) {
         if (context instanceof android.app.Activity) {
             ((android.app.Activity) context).runOnUiThread(() -> {
