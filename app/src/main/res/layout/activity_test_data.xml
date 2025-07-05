@@ -1,43 +1,79 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp">
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#f5f5f5">
 
-    <LinearLayout
+    <!-- Header -->
+    <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:text="🧪 ScreenScrubber Test Lab"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#2196F3"
+        android:gravity="center"
+        android:padding="8dp"
+        android:layout_marginBottom="16dp"
+        android:background="@android:color/white"
+        android:elevation="2dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Test Data Screen"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="16dp"
-            android:textColor="#D32F2F" />
+    <!-- Instructions -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="📋 Sample Data &amp; Test Results (Long-press to run tests)"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Sample Data / Results Area -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/white"
+        android:elevation="1dp">
 
         <TextView
             android:id="@+id/sampleDataText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="16sp"
+            android:textSize="14sp"
+            android:textColor="#333333"
             android:lineSpacingExtra="4dp"
-            android:padding="16dp"
-            android:background="#F5F5F5"
-            android:textIsSelectable="true" />
+            android:padding="12dp"
+            android:fontFamily="monospace"
+            android:text="Loading test data..." />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="⚠️ This screen contains fake sensitive data for testing purposes only"
-            android:textSize="12sp"
-            android:layout_marginTop="16dp"
-            android:textColor="#FF9800"
-            android:background="#FFF3E0"
-            android:padding="8dp" />
+    </ScrollView>
 
-    </LinearLayout>
+    <!-- Optional Test Button (you can uncomment if needed) -->
 
-</ScrollView>
+    <Button
+        android:id="@+id/runTestsButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🔬 Run Tests"
+        android:textColor="@android:color/white"
+        android:background="#2196F3"
+        android:layout_marginTop="16dp"
+        android:padding="12dp"
+        android:elevation="2dp" />
+
+
+    <!-- Footer Info -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="💡 Long-press the text area above to run automated validation tests"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:gravity="center"
+        android:layout_marginTop="8dp"
+        android:padding="8dp" />
+
+</LinearLayout>
