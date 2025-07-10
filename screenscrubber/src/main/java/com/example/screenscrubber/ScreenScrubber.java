@@ -4,10 +4,12 @@ import android.content.Context;
 import android.util.Log;
 
 /**
- * Enhanced public API for ScreenScrubber library with better error handling and monitoring
+ * Enhanced public API for ScreenScrubber library supporting both screenshots and camera photos
  * Usage:
  *   ScreenScrubber scrubber = new ScreenScrubber(context);
- *   scrubber.start();  // Enable protection
+ *   scrubber.start();  // Enable protection for both screenshots and photos
+ *   scrubber.startScreenshotProtection();  // Enable only screenshot protection
+ *   scrubber.startPhotoProtection();       // Enable only photo protection
  *   scrubber.stop();   // Disable protection
  *   scrubber.cleanup(); // Call in onDestroy()
  */
@@ -16,6 +18,8 @@ public class ScreenScrubber {
 
     private ScreenScrubberManager manager;
     private boolean isActive = false;
+    private boolean monitoringScreenshots = false;
+    private boolean monitoringPhotos = false;
     private Context context;
 
     public ScreenScrubber(Context context) {
@@ -26,14 +30,24 @@ public class ScreenScrubber {
         this.context = context.getApplicationContext(); // Use app context to avoid leaks
         this.manager = new ScreenScrubberManager(this.context);
 
-        Log.d(TAG, "ScreenScrubber initialized");
+        Log.d(TAG, "Enhanced ScreenScrubber initialized");
     }
 
     /**
-     * Start screenshot protection
+     * Start protection for both screenshots and camera photos
      * @return true if started successfully
      */
     public boolean start() {
+        return start(true, true);
+    }
+
+    /**
+     * Start protection with specific options
+     * @param screenshots Enable screenshot monitoring
+     * @param photos Enable camera photo monitoring
+     * @return true if started successfully
+     */
+    public boolean start(boolean screenshots, boolean photos) {
         if (isActive) {
             Log.w(TAG, "ScreenScrubber already active");
             return true;
@@ -44,10 +58,18 @@ public class ScreenScrubber {
             return false;
         }
 
+        if (!screenshots && !photos) {
+            Log.e(TAG, "At least one monitoring type must be enabled");
+            return false;
+        }
+
         try {
-            manager.startMonitoring();
+            manager.startMonitoring(screenshots, photos);
             isActive = true;
-            Log.i(TAG, "ScreenScrubber protection started successfully");
+            monitoringScreenshots = screenshots;
+            monitoringPhotos = photos;
+
+            Log.i(TAG, "ScreenScrubber protection started - Screenshots: " + screenshots + ", Photos: " + photos);
             return true;
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception starting ScreenScrubber - check permissions", e);
@@ -59,7 +81,23 @@ public class ScreenScrubber {
     }
 
     /**
-     * Stop screenshot protection
+     * Start screenshot protection only
+     * @return true if started successfully
+     */
+    public boolean startScreenshotProtection() {
+        return start(true, false);
+    }
+
+    /**
+     * Start camera photo protection only
+     * @return true if started successfully
+     */
+    public boolean startPhotoProtection() {
+        return start(false, true);
+    }
+
+    /**
+     * Stop all protection
      */
     public void stop() {
         if (!isActive) {
@@ -70,11 +108,41 @@ public class ScreenScrubber {
         try {
             manager.stopMonitoring();
             isActive = false;
+            monitoringScreenshots = false;
+            monitoringPhotos = false;
             Log.i(TAG, "ScreenScrubber protection stopped");
         } catch (Exception e) {
             Log.e(TAG, "Error stopping ScreenScrubber", e);
             // Still mark as inactive even if there was an error
             isActive = false;
+            monitoringScreenshots = false;
+            monitoringPhotos = false;
+        }
+    }
+
+    /**
+     * Update monitoring options without stopping/starting
+     * @param screenshots Enable screenshot monitoring
+     * @param photos Enable camera photo monitoring
+     */
+    public void updateMonitoringOptions(boolean screenshots, boolean photos) {
+        if (!isActive) {
+            Log.w(TAG, "ScreenScrubber not active, cannot update monitoring options");
+            return;
+        }
+
+        if (!screenshots && !photos) {
+            Log.e(TAG, "At least one monitoring type must be enabled");
+            return;
+        }
+
+        try {
+            manager.setMonitoringOptions(screenshots, photos);
+            monitoringScreenshots = screenshots;
+            monitoringPhotos = photos;
+            Log.i(TAG, "Monitoring options updated - Screenshots: " + screenshots + ", Photos: " + photos);
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating monitoring options", e);
         }
     }
 
@@ -86,6 +154,20 @@ public class ScreenScrubber {
     }
 
     /**
+     * Check if screenshot monitoring is enabled
+     */
+    public boolean isMonitoringScreenshots() {
+        return isActive && monitoringScreenshots;
+    }
+
+    /**
+     * Check if photo monitoring is enabled
+     */
+    public boolean isMonitoringPhotos() {
+        return isActive && monitoringPhotos;
+    }
+
+    /**
      * Check if the ScreenScrubber is in a healthy state
      */
     public boolean isHealthy() {
@@ -93,11 +175,11 @@ public class ScreenScrubber {
     }
 
     /**
-     * Get processing statistics
+     * Get enhanced processing statistics
      */
     public ScreenScrubberManager.ProcessingStats getStats() {
         if (manager == null) {
-            return new ScreenScrubberManager.ProcessingStats(0, 0, 0, 0);
+            return new ScreenScrubberManager.ProcessingStats(0, 0, 0, 0, 0, 0);
         }
         return manager.getStats();
     }
@@ -108,6 +190,15 @@ public class ScreenScrubber {
     public void resetStats() {
         if (manager != null) {
             manager.resetStats();
+        }
+    }
+
+    /**
+     * Scan recent images for immediate processing
+     */
+    public void scanRecentImages() {
+        if (manager != null) {
+            manager.scanRecentImages();
         }
     }
 
@@ -134,7 +225,8 @@ public class ScreenScrubber {
                         result.hasSensitiveData,
                         result.sensitiveMatches != null ? result.sensitiveMatches.size() : 0,
                         result.censoredImagePath,
-                        result.success
+                        result.success,
+                        result.imageType
                 ));
             }
 
@@ -143,6 +235,18 @@ public class ScreenScrubber {
                 callback.onError(error);
             }
         });
+    }
+
+    /**
+     * Get monitoring configuration
+     */
+    public MonitoringConfig getMonitoringConfig() {
+        return new MonitoringConfig(
+                isActive,
+                monitoringScreenshots,
+                monitoringPhotos,
+                isHealthy()
+        );
     }
 
     /**
@@ -170,6 +274,8 @@ public class ScreenScrubber {
             Log.e(TAG, "Error during ScreenScrubber cleanup", e);
         } finally {
             isActive = false;
+            monitoringScreenshots = false;
+            monitoringPhotos = false;
             Log.d(TAG, "ScreenScrubber cleanup finished");
         }
     }
@@ -180,25 +286,50 @@ public class ScreenScrubber {
         void onError(String error);
     }
 
-    // Test result class
+    // Enhanced test result class
     public static class TestResult {
         public final boolean hasSensitiveData;
         public final int sensitiveMatchCount;
         public final String censoredImagePath;
         public final boolean processingSuccess;
+        public final MediaObserver.ImageType imageType;
 
         public TestResult(boolean hasSensitiveData, int sensitiveMatchCount,
-                          String censoredImagePath, boolean processingSuccess) {
+                          String censoredImagePath, boolean processingSuccess,
+                          MediaObserver.ImageType imageType) {
             this.hasSensitiveData = hasSensitiveData;
             this.sensitiveMatchCount = sensitiveMatchCount;
             this.censoredImagePath = censoredImagePath;
             this.processingSuccess = processingSuccess;
+            this.imageType = imageType;
         }
 
         @Override
         public String toString() {
-            return String.format("TestResult{sensitive=%s, matches=%d, success=%s}",
-                    hasSensitiveData, sensitiveMatchCount, processingSuccess);
+            return String.format("TestResult{sensitive=%s, matches=%d, success=%s, type=%s}",
+                    hasSensitiveData, sensitiveMatchCount, processingSuccess, imageType);
+        }
+    }
+
+    // Monitoring configuration class
+    public static class MonitoringConfig {
+        public final boolean isActive;
+        public final boolean monitoringScreenshots;
+        public final boolean monitoringPhotos;
+        public final boolean isHealthy;
+
+        public MonitoringConfig(boolean isActive, boolean monitoringScreenshots,
+                                boolean monitoringPhotos, boolean isHealthy) {
+            this.isActive = isActive;
+            this.monitoringScreenshots = monitoringScreenshots;
+            this.monitoringPhotos = monitoringPhotos;
+            this.isHealthy = isHealthy;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("MonitoringConfig{active=%s, screenshots=%s, photos=%s, healthy=%s}",
+                    isActive, monitoringScreenshots, monitoringPhotos, isHealthy);
         }
     }
 
@@ -206,7 +337,7 @@ public class ScreenScrubber {
      * Get library version and build info
      */
     public static LibraryInfo getLibraryInfo() {
-        return new LibraryInfo("1.0.0", "Enhanced", System.currentTimeMillis());
+        return new LibraryInfo("2.0.0", "Enhanced with Photo Support", System.currentTimeMillis());
     }
 
     public static class LibraryInfo {
@@ -227,12 +358,14 @@ public class ScreenScrubber {
     }
 
     /**
-     * Builder pattern for advanced configuration (future extensibility)
+     * Enhanced builder pattern for advanced configuration
      */
     public static class Builder {
         private Context context;
         private boolean enableNotifications = true;
         private boolean enableStatistics = true;
+        private boolean enableScreenshots = true;
+        private boolean enablePhotos = true;
         private long processingTimeoutMs = 30000;
 
         public Builder(Context context) {
@@ -249,15 +382,50 @@ public class ScreenScrubber {
             return this;
         }
 
+        public Builder enableScreenshots(boolean enable) {
+            this.enableScreenshots = enable;
+            return this;
+        }
+
+        public Builder enablePhotos(boolean enable) {
+            this.enablePhotos = enable;
+            return this;
+        }
+
         public Builder setProcessingTimeout(long timeoutMs) {
             this.processingTimeoutMs = timeoutMs;
             return this;
         }
 
         public ScreenScrubber build() {
-            // For now, return standard ScreenScrubber
-            // In future, could configure based on these settings
-            return new ScreenScrubber(context);
+            ScreenScrubber scrubber = new ScreenScrubber(context);
+            // Future: Apply configuration settings
+            return scrubber;
+        }
+    }
+
+    /**
+     * Quick configuration presets
+     */
+    public static class Presets {
+        public static ScreenScrubber createScreenshotOnly(Context context) {
+            return new Builder(context)
+                    .enableScreenshots(true)
+                    .enablePhotos(false)
+                    .build();
+        }
+
+        public static ScreenScrubber createPhotoOnly(Context context) {
+            return new Builder(context)
+                    .enableScreenshots(false)
+                    .enablePhotos(true)
+                    .build();
+        }
+
+        public static ScreenScrubber createSilent(Context context) {
+            return new Builder(context)
+                    .enableNotifications(false)
+                    .build();
         }
     }
 }

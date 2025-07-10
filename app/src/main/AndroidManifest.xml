@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Enhanced permissions for monitoring both screenshots and camera photos -->
+
     <!-- For Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- For Android 10-12 (API 29-32) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -13,11 +16,9 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- For deleting files created by system (Android 11+) -->
+    <!-- For managing files (optional - can be removed if too restrictive) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
-
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
 
     <application
@@ -45,6 +46,14 @@
             android:name=".TestDataActivity"
             android:exported="false"
             android:label="Test Data Screen" />
+
+        <!-- Optional: Add a service for background monitoring (future enhancement) -->
+        <!--
+        <service
+            android:name=".ScreenScrubberService"
+            android:exported="false"
+            android:enabled="true" />
+        -->
 
     </application>
 
