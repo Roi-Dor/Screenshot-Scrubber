@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 
 public class SensitiveDataDetector {
     private static final String TAG = "SensitiveDataDetector";
+    private static final boolean ALLOW_LUHN_FAIL = false; // Flag to control strict validation
 
     public static class SensitiveMatch {
         public final String type;
@@ -33,31 +34,35 @@ public class SensitiveDataDetector {
 
     // IMPROVED OCR-TOLERANT PATTERNS
     private static final Pattern CREDIT_CARD_PATTERN =
-            Pattern.compile("\\b(?:\\d{4}[\\s-]?){3}\\d{4}\\b|\\b\\d{4}\\s+\\d{4}\\s+\\d{4}\\s+\\d{4}\\b");
+            Pattern.compile("(?:\\d[\\s-]*){13,19}");
 
-    // More restrictive US SSN - avoid Israeli ID conflicts
     private static final Pattern US_SSN_PATTERN =
             Pattern.compile("\\b\\d{3}[-\\s]\\d{2}[-\\s]\\d{4}\\b");
 
-    // Enhanced US Phone - handle parentheses and various formats
-    private static final Pattern US_PHONE_PATTERN =
-            Pattern.compile("\\b(?:\\+?1[\\s-]?)?(?:\\(?[2-9]\\d{2}\\)?[\\s.-]?)[2-9]\\d{2}[\\s.-]?\\d{4}\\b|\\b\\([2-9]\\d{2}\\)\\s?[2-9]\\d{2}-\\d{4}\\b");
+    // Enhanced US Phone - handle both formatted and unformatted
+    private static final Pattern US_PHONE_PATTERN = Pattern.compile(
+            "\\b(?:\\+?1[\\s-]?)?(?:\\(?[2-9]\\d{2}\\)?[\\s.-]?)[2-9]\\d{2}[\\s.-]?\\d{4}\\b" +
+                    "|\\b[2-9]\\d{9}\\b" +
+                    "|\\b[2-9]\\d{2}\\.[2-9]\\d{2}\\.\\d{4}\\b"  // ADD DOT FORMAT
+    );
 
-    // Enhanced EMAIL - handle "example .com" OCR issue
+
+    // Enhanced EMAIL - handle OCR spacing issues
     private static final Pattern EMAIL_PATTERN =
             Pattern.compile("\\b[a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*\\s?\\.\\s?[a-zA-Z]{2,6}\\b");
 
-    // Israeli patterns - more specific to avoid US conflicts
+    // Israeli patterns
     private static final Pattern ISRAELI_ID_PATTERN =
             Pattern.compile("\\b\\d{9}\\b|\\b\\d{3}[\\s-]\\d{3}[\\s-]\\d{3}\\b");
 
-    private static final Pattern ISRAELI_PHONE_PATTERN =
-            Pattern.compile("\\b(?:\\+972[\\s-]?|0)?(?:2|3|4|5[0-9]|7[2-9]|8|9)[\\s-]?\\d{3}[\\s-]?\\d{4}\\b");
-
+    private static final Pattern ISRAELI_PHONE_PATTERN = Pattern.compile(
+            "\\b(?:\\+972[\\s-]?|0)?(?:2|3|4|5[0-9]|7[2-9]|8|9)[\\s-]?\\d{3}[\\s-]?\\d{4}\\b" +
+                    "|\\b\\+972[\\s-]?[2-9][\\s-]?\\d{3}[\\s-]?\\d{4}\\b"  // ADD INTERNATIONAL FORMAT
+    );
     private static final Pattern ISRAELI_BANK_ACCOUNT_PATTERN =
             Pattern.compile("\\b(?:0[1-9]|[1-9][0-9])[\\s-]?\\d{3}[\\s-]?\\d{6}\\b");
 
-    // Validation sets (unchanged)
+    // Validation sets
     private static final Set<String> VALID_ISRAELI_AREA_CODES = new HashSet<>();
     static {
         VALID_ISRAELI_AREA_CODES.add("02"); VALID_ISRAELI_AREA_CODES.add("03"); VALID_ISRAELI_AREA_CODES.add("04");
@@ -89,38 +94,27 @@ public class SensitiveDataDetector {
         }
 
         String cleanText = text.trim();
-        Log.d(TAG, "🔍 PROCESSING TEXT (" + cleanText.length() + " chars):");
-        Log.d(TAG, "📝 FIRST 200 CHARS: " + cleanText.substring(0, Math.min(200, cleanText.length())));
+        Log.d(TAG, "🔍 PROCESSING TEXT (" + cleanText.length() + " chars)");
 
         try {
-            // CRITICAL: Order matters! Check Israeli patterns FIRST to avoid US conflicts
+            // Order matters! Check Israeli patterns FIRST
             Log.d(TAG, "🇮🇱 === ISRAELI DETECTION PHASE ===");
             findIsraeliIDs(cleanText, matches);
             findIsraeliPhones(cleanText, matches);
             findIsraeliBankAccounts(cleanText, matches);
 
             Log.d(TAG, "🇺🇸 === US DETECTION PHASE ===");
-            // Then check US patterns
             findCreditCards(cleanText, matches);
             findUSSSNs(cleanText, matches);
             findUSPhones(cleanText, matches);
 
             Log.d(TAG, "🌐 === UNIVERSAL DETECTION PHASE ===");
-            // Universal patterns last
             findEmails(cleanText, matches);
 
-            // Remove overlapping matches with better logic
             Log.d(TAG, "🔧 === OVERLAP RESOLUTION ===");
-            List<SensitiveMatch> originalMatches = new ArrayList<>(matches);
             matches = removeOverlappingMatches(matches);
 
-            Log.d(TAG, "📊 DETECTION SUMMARY:");
-            Log.d(TAG, "   Original matches: " + originalMatches.size());
-            Log.d(TAG, "   Final matches: " + matches.size());
-
-            for (SensitiveMatch match : matches) {
-                Log.d(TAG, "✅ FINAL: " + match.type + " = '" + maskValue(match.value, match.type) + "' at " + match.start + "-" + match.end);
-            }
+            Log.d(TAG, "📊 DETECTION SUMMARY: " + matches.size() + " final matches");
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error in detection", e);
@@ -129,16 +123,113 @@ public class SensitiveDataDetector {
         return matches;
     }
 
+    private void findCreditCards(String text, List<SensitiveMatch> matches) {
+        Matcher matcher = CREDIT_CARD_PATTERN.matcher(text);
+        while (matcher.find()) {
+            String match = matcher.group();
+            String cleanNumber = match.replaceAll("[\\s-]", "");
+
+            if (cleanNumber.length() >= 13 && cleanNumber.length() <= 19) {
+                // Use more lenient validation - confidence boost for Luhn pass
+                if (ALLOW_LUHN_FAIL || isValidCreditCardNumber(cleanNumber)) {
+                    double confidence = isValidCreditCardNumber(cleanNumber) ? 0.95 : 0.7;
+                    matches.add(new SensitiveMatch("CREDIT_CARD", match, matcher.start(), matcher.end(), confidence));
+                    Log.d(TAG, "✅ Credit Card confirmed: " + maskValue(match, "CREDIT_CARD"));
+                }
+            }
+        }
+    }
+
+    private void findUSPhones(String text, List<SensitiveMatch> matches) {
+        // Add pattern for unformatted 10-digit numbers
+        Pattern barePhonePattern = Pattern.compile("\\b[2-9]\\d{9}\\b");
+
+        // Check formatted phones first
+        Matcher matcher = US_PHONE_PATTERN.matcher(text);
+        while (matcher.find()) {
+            String match = matcher.group();
+
+            if (!isIsraeliPhoneFormat(match) && !overlapsWithExisting(matches, matcher.start(), matcher.end(), "ISRAELI_PHONE")) {
+                String cleanPhone = match.replaceAll("[\\s\\-\\(\\)\\.]", "");
+                if (cleanPhone.startsWith("+1")) cleanPhone = cleanPhone.substring(2);
+                if (cleanPhone.startsWith("1") && cleanPhone.length() == 11) cleanPhone = cleanPhone.substring(1);
+
+                if (cleanPhone.length() == 10 && cleanPhone.charAt(0) >= '2' && !isRepeatedDigits(cleanPhone)) {
+                    matches.add(new SensitiveMatch("US_PHONE", match, matcher.start(), matcher.end(), 0.8));
+                    Log.d(TAG, "✅ US Phone confirmed: " + maskValue(match, "US_PHONE"));
+                }
+            }
+        }
+
+        // Check bare 10-digit numbers
+        Matcher bareMatcher = barePhonePattern.matcher(text);
+        while (bareMatcher.find()) {
+            String match = bareMatcher.group();
+
+            if (!overlapsWithExisting(matches, bareMatcher.start(), bareMatcher.end(), "ISRAELI_PHONE") &&
+                    !overlapsWithExisting(matches, bareMatcher.start(), bareMatcher.end(), "US_PHONE")) {
+                matches.add(new SensitiveMatch("US_PHONE", match, bareMatcher.start(), bareMatcher.end(), 0.7));
+                Log.d(TAG, "✅ US Phone (bare) confirmed: " + maskValue(match, "US_PHONE"));
+            }
+        }
+    }
+
+    private void findEmails(String text, List<SensitiveMatch> matches) {
+        // Normalize OCR spacing issues: "example .com" -> "example.com"
+        String normalizedText = text.replaceAll("(\\w)\\s+\\.\\s+(\\w)", "$1.$2");
+
+        Matcher matcher = EMAIL_PATTERN.matcher(normalizedText);
+        while (matcher.find()) {
+            String match = matcher.group().replaceAll("\\s+", ""); // Remove any remaining spaces
+
+            if (match.contains("@") && match.contains(".") && match.length() > 5 && isValidEmailFormat(match)) {
+                // Find position in original text
+                int originalStart = findEmailInOriginalText(text, match);
+                if (originalStart >= 0) {
+                    matches.add(new SensitiveMatch("EMAIL", match, originalStart, originalStart + match.length(), 0.95));
+                    Log.d(TAG, "✅ Email confirmed: " + maskValue(match, "EMAIL"));
+                }
+            }
+        }
+    }
+
+    // Helper method to find email position in original text
+    private int findEmailInOriginalText(String originalText, String normalizedEmail) {
+        // Try exact match first
+        int exactPos = originalText.indexOf(normalizedEmail);
+        if (exactPos >= 0) return exactPos;
+
+        // Look for spaced version
+        String spacedEmail = normalizedEmail.replace(".", " . ");
+        int spacedPos = originalText.indexOf(spacedEmail);
+        if (spacedPos >= 0) return spacedPos;
+
+        // Find by @ symbol and work around it
+        String[] parts = normalizedEmail.split("@");
+        if (parts.length == 2) {
+            int atPos = originalText.indexOf("@");
+            while (atPos >= 0) {
+                // Check if this @ belongs to our email
+                int start = Math.max(0, atPos - parts[0].length() - 2);
+                int end = Math.min(originalText.length(), atPos + parts[1].length() + 3);
+                String candidate = originalText.substring(start, end);
+                if (candidate.replaceAll("\\s+", "").contains(normalizedEmail)) {
+                    return start + candidate.indexOf(parts[0].charAt(0));
+                }
+                atPos = originalText.indexOf("@", atPos + 1);
+            }
+        }
+
+        return 0; // Fallback
+    }
+
     private void findIsraeliIDs(String text, List<SensitiveMatch> matches) {
         Matcher matcher = ISRAELI_ID_PATTERN.matcher(text);
         while (matcher.find()) {
             String match = matcher.group();
-            Log.d(TAG, "Israeli ID candidate: " + match);
-
             if (isValidIsraeliID(match)) {
-                // High confidence for Israeli ID
                 matches.add(new SensitiveMatch("ISRAELI_ID", match, matcher.start(), matcher.end(), 0.95));
-                Log.d(TAG, "✅ Israeli ID confirmed: " + match);
+                Log.d(TAG, "✅ Israeli ID confirmed");
             }
         }
     }
@@ -147,63 +238,12 @@ public class SensitiveDataDetector {
         Matcher matcher = US_SSN_PATTERN.matcher(text);
         while (matcher.find()) {
             String match = matcher.group();
-            Log.d(TAG, "US SSN candidate: " + match);
 
-            // Check if this overlaps with any Israeli ID
-            boolean overlapsIsraeliID = false;
-            for (SensitiveMatch existing : matches) {
-                if (existing.type.equals("ISRAELI_ID") &&
-                        matcher.start() < existing.end && matcher.end() > existing.start) {
-                    overlapsIsraeliID = true;
-                    Log.d(TAG, "❌ US SSN rejected - overlaps Israeli ID");
-                    break;
-                }
-            }
-
-            if (!overlapsIsraeliID) {
+            if (!overlapsWithExisting(matches, matcher.start(), matcher.end(), "ISRAELI_ID")) {
                 String cleanSSN = match.replaceAll("[-\\s]", "");
                 if (cleanSSN.length() == 9 && !cleanSSN.equals("000000000") && !cleanSSN.equals("111111111")) {
                     matches.add(new SensitiveMatch("US_SSN", match, matcher.start(), matcher.end(), 0.9));
-                    Log.d(TAG, "✅ US SSN confirmed: " + match);
-                }
-            }
-        }
-    }
-
-    private void findUSPhones(String text, List<SensitiveMatch> matches) {
-        Matcher matcher = US_PHONE_PATTERN.matcher(text);
-        while (matcher.find()) {
-            String match = matcher.group();
-            Log.d(TAG, "US Phone candidate: '" + match + "'");
-
-            // Skip if it's Israeli format
-            if (isIsraeliPhoneFormat(match)) {
-                Log.d(TAG, "❌ US Phone rejected - Israeli format");
-                continue;
-            }
-
-            // Check for overlap with Israeli phones
-            boolean overlapsIsraeliPhone = false;
-            for (SensitiveMatch existing : matches) {
-                if (existing.type.equals("ISRAELI_PHONE") &&
-                        matcher.start() < existing.end && matcher.end() > existing.start) {
-                    overlapsIsraeliPhone = true;
-                    break;
-                }
-            }
-
-            if (!overlapsIsraeliPhone) {
-                String cleanPhone = match.replaceAll("[\\s\\-\\(\\)\\.]", "");
-                Log.d(TAG, "Clean US Phone: '" + cleanPhone + "' (length: " + cleanPhone.length() + ")");
-
-                if (cleanPhone.startsWith("+1")) cleanPhone = cleanPhone.substring(2);
-                if (cleanPhone.startsWith("1") && cleanPhone.length() == 11) cleanPhone = cleanPhone.substring(1);
-
-                if (cleanPhone.length() == 10 && cleanPhone.charAt(0) >= '2' && cleanPhone.charAt(0) <= '9') {
-                    matches.add(new SensitiveMatch("US_PHONE", match, matcher.start(), matcher.end(), 0.8));
-                    Log.d(TAG, "✅ US Phone confirmed: '" + match + "'");
-                } else {
-                    Log.d(TAG, "❌ US Phone rejected - invalid format: length=" + cleanPhone.length() + ", first=" + (cleanPhone.length() > 0 ? cleanPhone.charAt(0) : "none"));
+                    Log.d(TAG, "✅ US SSN confirmed");
                 }
             }
         }
@@ -213,11 +253,9 @@ public class SensitiveDataDetector {
         Matcher matcher = ISRAELI_PHONE_PATTERN.matcher(text);
         while (matcher.find()) {
             String match = matcher.group();
-            Log.d(TAG, "Israeli Phone candidate: " + match);
-
             if (isValidIsraeliPhone(match)) {
                 matches.add(new SensitiveMatch("ISRAELI_PHONE", match, matcher.start(), matcher.end(), 0.9));
-                Log.d(TAG, "✅ Israeli Phone confirmed: " + match);
+                Log.d(TAG, "✅ Israeli Phone confirmed");
             }
         }
     }
@@ -226,94 +264,59 @@ public class SensitiveDataDetector {
         Matcher matcher = ISRAELI_BANK_ACCOUNT_PATTERN.matcher(text);
         while (matcher.find()) {
             String match = matcher.group();
-            Log.d(TAG, "Israeli Bank candidate: " + match);
-
             if (isValidIsraeliBankAccount(match)) {
                 matches.add(new SensitiveMatch("ISRAELI_BANK_ACCOUNT", match, matcher.start(), matcher.end(), 0.85));
-                Log.d(TAG, "✅ Israeli Bank confirmed: " + match);
+                Log.d(TAG, "✅ Israeli Bank confirmed");
             }
         }
     }
 
-    private void findCreditCards(String text, List<SensitiveMatch> matches) {
-        Matcher matcher = CREDIT_CARD_PATTERN.matcher(text);
-        while (matcher.find()) {
-            String match = matcher.group();
-            Log.d(TAG, "Credit Card candidate: '" + match + "'");
-
-            String cleanNumber = match.replaceAll("[\\s-]", "");
-            Log.d(TAG, "Clean CC number: '" + cleanNumber + "' (length: " + cleanNumber.length() + ")");
-
-            if (cleanNumber.length() >= 13 && cleanNumber.length() <= 19) {
-                // Basic validation - starts with valid prefixes
-                char firstDigit = cleanNumber.charAt(0);
-                if (firstDigit == '4' || firstDigit == '5' || firstDigit == '3' || firstDigit == '6') {
-                    matches.add(new SensitiveMatch("CREDIT_CARD", match, matcher.start(), matcher.end(), 0.9));
-                    Log.d(TAG, "✅ Credit Card confirmed: '" + match + "'");
-                } else {
-                    Log.d(TAG, "❌ Credit Card rejected - invalid prefix: " + firstDigit);
-                }
-            } else {
-                Log.d(TAG, "❌ Credit Card rejected - invalid length: " + cleanNumber.length());
+    // Helper method to check overlaps
+    private boolean overlapsWithExisting(List<SensitiveMatch> matches, int start, int end, String type) {
+        for (SensitiveMatch existing : matches) {
+            if (existing.type.equals(type) && start < existing.end && end > existing.start) {
+                return true;
             }
         }
+        return false;
     }
 
-    private void findEmails(String text, List<SensitiveMatch> matches) {
-        // Special handling for OCR-damaged emails like "example .com"
-        String preprocessedText = text.replaceAll("(\\w)\\s+\\.\\s+(\\w)", "$1.$2");
+    // Validation methods
+    private boolean isValidCreditCardNumber(String number) {
+        if (isRepeatedDigits(number)) return false;
 
-        Matcher matcher = EMAIL_PATTERN.matcher(preprocessedText);
-        while (matcher.find()) {
-            String match = matcher.group();
-            Log.d(TAG, "Email candidate: " + match);
-
-            // Normalize the email
-            String normalizedEmail = match.replaceAll("\\s+", "");
-
-            if (normalizedEmail.contains("@") && normalizedEmail.contains(".") &&
-                    normalizedEmail.length() > 5 && isValidEmailFormat(normalizedEmail)) {
-
-                // Find original position in unmodified text
-                int originalStart = findOriginalPosition(text, match, matcher.start());
-                int originalEnd = originalStart + match.length();
-
-                matches.add(new SensitiveMatch("EMAIL", match, originalStart, originalEnd, 0.95));
-                Log.d(TAG, "✅ Email confirmed: " + match);
-            }
-        }
-    }
-
-    private boolean isValidCreditCard(String number) {
-        // Basic Luhn algorithm check
+        // Luhn algorithm
         int sum = 0;
         boolean alternate = false;
         for (int i = number.length() - 1; i >= 0; i--) {
             int n = Integer.parseInt(number.substring(i, i + 1));
             if (alternate) {
                 n *= 2;
-                if (n > 9) {
-                    n = (n % 10) + 1;
-                }
+                if (n > 9) n = (n % 10) + 1;
             }
             sum += n;
             alternate = !alternate;
         }
-        return (sum % 10 == 0);
+
+        boolean luhnValid = (sum % 10 == 0);
+        char firstDigit = number.charAt(0);
+        boolean validPrefix = (firstDigit == '4' || firstDigit == '5' || firstDigit == '3' || firstDigit == '6');
+
+        return luhnValid && validPrefix;
+    }
+
+    private boolean isRepeatedDigits(String number) {
+        if (number.length() < 4) return false;
+        char firstDigit = number.charAt(0);
+        int count = 0;
+        for (char c : number.toCharArray()) {
+            if (c == firstDigit) count++;
+        }
+        return (count * 1.0 / number.length()) > 0.7;
     }
 
     private boolean isValidEmailFormat(String email) {
         return email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,6}$");
-    }
-
-    private int findOriginalPosition(String originalText, String match, int approximatePos) {
-        // Simple search around the approximate position
-        int start = Math.max(0, approximatePos - 10);
-        int end = Math.min(originalText.length(), approximatePos + match.length() + 10);
-        String searchArea = originalText.substring(start, end);
-
-        int found = searchArea.indexOf(match);
-        return found >= 0 ? start + found : approximatePos;
     }
 
     private boolean isIsraeliPhoneFormat(String phone) {
@@ -328,58 +331,84 @@ public class SensitiveDataDetector {
         if (id == null) return false;
         String cleanID = id.replaceAll("[\\s-]", "");
 
-        if (cleanID.length() != 9) return false;
-        if (cleanID.equals("000000000") || cleanID.equals("111111111") || cleanID.equals("123456789")) return false;
+        if (cleanID.length() != 9) {
+            Log.d(TAG, "❌ Israeli ID wrong length: " + cleanID.length() + " for: " + cleanID);
+            return false;
+        }
 
-        return isValidIsraeliIDChecksum(cleanID);
+        if (cleanID.equals("000000000") || cleanID.equals("111111111") || cleanID.equals("123456789")) {
+            Log.d(TAG, "❌ Israeli ID blacklisted: " + cleanID);
+            return false;
+        }
+
+        boolean checksumValid = isValidIsraeliIDChecksum(cleanID);
+        Log.d(TAG, "🔍 Israeli ID checksum for " + cleanID + ": " + checksumValid);
+
+        return checksumValid;
     }
 
     private boolean isValidIsraeliIDChecksum(String id) {
         try {
             int sum = 0;
+            Log.d(TAG, "🧮 Calculating checksum for: " + id);
+
             for (int i = 0; i < 9; i++) {
                 int digit = Character.getNumericValue(id.charAt(i));
+                int originalDigit = digit;
+
                 if (i % 2 == 1) {
                     digit *= 2;
                     if (digit > 9) {
                         digit = digit / 10 + digit % 10;
                     }
                 }
+
                 sum += digit;
+                Log.d(TAG, "   Position " + i + ": " + originalDigit + " -> " + digit + " (sum: " + sum + ")");
             }
-            return sum % 10 == 0;
+
+            boolean valid = (sum % 10 == 0);
+            Log.d(TAG, "🔍 Final sum: " + sum + ", valid: " + valid);
+            return valid;
+
         } catch (Exception e) {
+            Log.e(TAG, "❌ Error in checksum calculation", e);
             return false;
         }
     }
-
     private boolean isValidIsraeliPhone(String phone) {
         if (phone == null) return false;
         String cleanPhone = phone.replaceAll("[\\s\\-\\(\\)\\.]", "");
 
+        Log.d(TAG, "🔍 Validating Israeli phone: '" + phone + "' -> '" + cleanPhone + "'");
+
         if (cleanPhone.startsWith("+972")) {
             cleanPhone = cleanPhone.substring(4);
+            Log.d(TAG, "   Removed +972: '" + cleanPhone + "'");
         }
 
         if (cleanPhone.startsWith("0")) {
             cleanPhone = cleanPhone.substring(1);
+            Log.d(TAG, "   Removed leading 0: '" + cleanPhone + "'");
         }
 
         if (cleanPhone.length() < 8 || cleanPhone.length() > 9) {
+            Log.d(TAG, "   ❌ Invalid length: " + cleanPhone.length());
             return false;
         }
 
         String areaCode = cleanPhone.substring(0, 2);
-        return VALID_ISRAELI_AREA_CODES.contains(areaCode);
+        boolean valid = VALID_ISRAELI_AREA_CODES.contains(areaCode);
+
+        Log.d(TAG, "   Area code: '" + areaCode + "', valid: " + valid);
+        return valid;
     }
 
     private boolean isValidIsraeliBankAccount(String account) {
         if (account == null) return false;
         String cleanAccount = account.replaceAll("[\\s-]", "");
 
-        if (cleanAccount.length() != 11) {
-            return false;
-        }
+        if (cleanAccount.length() != 11) return false;
 
         String bankCode = cleanAccount.substring(0, 2);
         return VALID_ISRAELI_BANK_CODES.contains(bankCode);
@@ -390,7 +419,6 @@ public class SensitiveDataDetector {
 
         List<SensitiveMatch> result = new ArrayList<>();
 
-        // Sort by position first, then by confidence (higher confidence first)
         matches.sort((a, b) -> {
             int posCompare = Integer.compare(a.start, b.start);
             return posCompare != 0 ? posCompare : Double.compare(b.confidence, a.confidence);
@@ -399,23 +427,21 @@ public class SensitiveDataDetector {
         for (SensitiveMatch current : matches) {
             boolean shouldAdd = true;
 
-            // Check against existing results
             for (int i = 0; i < result.size(); i++) {
                 SensitiveMatch existing = result.get(i);
 
-                // Check for overlap
                 if (current.start < existing.end && current.end > existing.start) {
-                    // There's an overlap
                     if (current.confidence > existing.confidence) {
-                        // Replace existing with current
                         result.set(i, current);
                         shouldAdd = false;
                         break;
-                    } else {
-                        // Keep existing, don't add current
+                    } else if (current.confidence == existing.confidence && isMoreSpecificType(current.type, existing.type)) {
+                        result.set(i, current);
                         shouldAdd = false;
                         break;
                     }
+                    shouldAdd = false;
+                    break;
                 }
             }
 
@@ -427,6 +453,13 @@ public class SensitiveDataDetector {
         return result;
     }
 
+    private boolean isMoreSpecificType(String type1, String type2) {
+        if (type1.startsWith("ISRAELI_") && type2.startsWith("US_")) return true;
+        if (type1.startsWith("US_") && type2.startsWith("ISRAELI_")) return false;
+        if (type1.equals("CREDIT_CARD") && (type2.contains("PHONE") || type2.contains("SSN"))) return true;
+        return false;
+    }
+
     private String maskValue(String value, String type) {
         if (value == null || value.length() < 4) return "***";
 
@@ -436,33 +469,26 @@ public class SensitiveDataDetector {
                     return value.substring(0, 4) + " **** **** " + value.substring(value.length() - 4);
                 }
                 return "****";
-            case "US_SSN":
-                return "***-**-****";
-            case "US_PHONE":
-                return "***-***-****";
-            case "ISRAELI_ID":
-                return "***-***-***";
-            case "ISRAELI_PHONE":
-                return "***-***-****";
-            case "ISRAELI_BANK_ACCOUNT":
-                return "**-***-******";
+            case "US_SSN": return "***-**-****";
+            case "US_PHONE": return "***-***-****";
+            case "ISRAELI_ID": return "***-***-***";
+            case "ISRAELI_PHONE": return "***-***-****";
+            case "ISRAELI_BANK_ACCOUNT": return "**-***-******";
             case "EMAIL":
                 int atIndex = value.indexOf('@');
                 if (atIndex > 2) {
                     return value.substring(0, 2) + "***" + value.substring(atIndex);
                 }
                 return "***@***";
-            default:
-                return "***";
+            default: return "***";
         }
     }
 
-    // Public methods for stats and testing (unchanged)
+    // Stats class for testing
     public DetectionStats getDetectionStats(String text) {
         long startTime = System.currentTimeMillis();
         List<SensitiveMatch> matches = detectSensitiveData(text);
         long processingTime = System.currentTimeMillis() - startTime;
-
         return new DetectionStats(matches.size(), processingTime, text.length(), matches);
     }
 
@@ -472,8 +498,7 @@ public class SensitiveDataDetector {
         public final int textLength;
         public final List<SensitiveMatch> matches;
 
-        public DetectionStats(int matchCount, long processingTimeMs, int textLength,
-                              List<SensitiveMatch> matches) {
+        public DetectionStats(int matchCount, long processingTimeMs, int textLength, List<SensitiveMatch> matches) {
             this.matchCount = matchCount;
             this.processingTimeMs = processingTimeMs;
             this.textLength = textLength;
@@ -482,8 +507,7 @@ public class SensitiveDataDetector {
 
         @Override
         public String toString() {
-            return String.format("DetectionStats{matches=%d, time=%dms, textLength=%d}",
-                    matchCount, processingTimeMs, textLength);
+            return String.format("DetectionStats{matches=%d, time=%dms, textLength=%d}", matchCount, processingTimeMs, textLength);
         }
     }
 }

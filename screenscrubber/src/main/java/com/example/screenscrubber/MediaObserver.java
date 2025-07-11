@@ -13,10 +13,12 @@ import android.util.Log;
 /**
  * Enhanced observer that monitors both screenshots and camera photos
  * Uses MediaStore to be compatible with Android 10+ scoped storage
+ * FIXED: Prevents re-processing of censored images
  */
 public class MediaObserver {
     private static final String TAG = "MediaObserver";
     private static final long NEW_IMAGE_THRESHOLD_MS = 10000; // 10 seconds
+    private static final String CENSORED_FOLDER = "ScreenScrubber_Censored";
 
     private Context context;
     private MediaListener listener;
@@ -96,6 +98,7 @@ public class MediaObserver {
 
     /**
      * Check if a new image was added and determine its type
+     * FIXED: Skip our own censored images to prevent re-processing
      */
     private void checkNewImage(Uri uri) {
         try {
@@ -125,6 +128,12 @@ public class MediaObserver {
 
                 cursor.close();
 
+                // CRITICAL FIX: Skip our own censored images
+                if (isOurCensoredImage(displayName, filePath, bucketName, relativePath)) {
+                    Log.d(TAG, "🚫 Ignoring our own censored image: " + displayName);
+                    return;
+                }
+
                 // Check if this is a recent image
                 long currentTime = System.currentTimeMillis() / 1000; // MediaStore uses seconds
                 if (currentTime - dateAdded <= NEW_IMAGE_THRESHOLD_MS / 1000) {
@@ -149,6 +158,31 @@ public class MediaObserver {
         } catch (Exception e) {
             Log.e(TAG, "Error checking new image", e);
         }
+    }
+
+    /**
+     * CRITICAL: Check if this is one of our censored images to prevent re-processing
+     */
+    private boolean isOurCensoredImage(String displayName, String filePath, String bucketName, String relativePath) {
+        if (displayName == null) displayName = "";
+        if (filePath == null) filePath = "";
+        if (bucketName == null) bucketName = "";
+        if (relativePath == null) relativePath = "";
+
+        // Check if it's in our censored folder
+        if (filePath.contains(CENSORED_FOLDER) ||
+                bucketName.contains(CENSORED_FOLDER) ||
+                relativePath.contains(CENSORED_FOLDER)) {
+            return true;
+        }
+
+        // Check if filename indicates it's our censored version
+        if (displayName.startsWith("censored_screenshot_") ||
+                displayName.startsWith("censored_photo_")) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -298,6 +332,11 @@ public class MediaObserver {
                     String filePath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA));
                     String bucketName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME));
                     String relativePath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH));
+
+                    // Skip our own censored images
+                    if (isOurCensoredImage(displayName, filePath, bucketName, relativePath)) {
+                        continue;
+                    }
 
                     ImageType imageType = determineImageType(displayName, filePath, bucketName, relativePath);
 

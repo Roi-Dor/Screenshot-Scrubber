@@ -1,65 +1,149 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:padding="16dp"
     android:background="#f5f5f5">
 
-    <!-- Header -->
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="🧪 ScreenScrubber Test Data"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:textColor="#2196F3"
-        android:gravity="center"
-        android:padding="8dp"
-        android:layout_marginBottom="16dp"
-        android:background="@android:color/white"
-        android:elevation="2dp" />
+        android:orientation="vertical">
 
-    <!-- Instructions -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="📋 Sample Data (Take a screenshot to test detection)"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="#333333"
-        android:layout_marginBottom="8dp" />
-
-    <!-- Sample Data Area -->
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@android:color/white"
-        android:elevation="1dp">
-
+        <!-- Header -->
         <TextView
-            android:id="@+id/sampleDataText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="14sp"
-            android:textColor="#333333"
-            android:lineSpacingExtra="4dp"
+            android:text="🛡️ ScreenScrubber Detection Test"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#2c3e50"
+            android:gravity="center"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Description -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Test the sensitive data detection capabilities.\nReal data will be detected, fake data will be rejected."
+            android:textSize="16sp"
+            android:textColor="#7f8c8d"
+            android:gravity="center"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Real Data Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📝 Real Data (Will be detected)"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#27ae60"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/realDataText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/data_background"
             android:padding="12dp"
+            android:textSize="12sp"
             android:fontFamily="monospace"
-            android:text="Loading test data..." />
+            android:textColor="#2c3e50"
+            android:layout_marginBottom="16dp" />
 
-    </ScrollView>
+        <!-- Fake Data Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🚫 Fake Data (Will be rejected)"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#e74c3c"
+            android:layout_marginBottom="8dp" />
 
-    <!-- Footer Info -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="💡 Make sure protection is enabled, then take a screenshot of this screen"
-        android:textSize="12sp"
-        android:textColor="#666666"
-        android:gravity="center"
-        android:layout_marginTop="8dp"
-        android:padding="8dp" />
+        <TextView
+            android:id="@+id/fakeDataText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/data_background"
+            android:padding="12dp"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="#2c3e50"
+            android:layout_marginBottom="20dp" />
 
-</LinearLayout>
+        <!-- Test Buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="20dp">
+
+            <Button
+                android:id="@+id/testRealButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Test Real"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/button_green"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/testFakeButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Test Fake"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/button_red"
+                android:layout_marginStart="8dp" />
+
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/testBothButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔍 Test Both Together"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:background="@drawable/button_blue"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Results Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="📊 Detection Results"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#8e44ad"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/resultsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/results_background"
+            android:padding="16dp"
+            android:text="👆 Click a test button above to see detection results"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textColor="#2c3e50"
+            android:minHeight="200dp" />
+
+        <!-- Info Footer -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="💡 This demonstrates the library's ability to distinguish between real and fake sensitive data using mathematical validation algorithms."
+            android:textSize="12sp"
+            android:textColor="#95a5a6"
+            android:gravity="center"
+            android:layout_marginTop="16dp"
+            android:padding="8dp" />
+
+    </LinearLayout>
+</ScrollView>

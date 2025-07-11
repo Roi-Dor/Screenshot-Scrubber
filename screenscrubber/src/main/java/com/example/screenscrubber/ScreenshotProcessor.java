@@ -216,7 +216,7 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * PRECISE CHARACTER-LEVEL CENSORING
+     * PRECISE CHARACTER-LEVEL CENSORING with FALLBACK to word-level boxes
      * This method creates precise bounding boxes for only the sensitive characters
      */
     private Bitmap createPreciseCensoredImage(Bitmap originalBitmap, Text visionText,
@@ -258,6 +258,12 @@ public class ScreenshotProcessor {
                     List<Rect> preciseBoxes = findPreciseCharacterBoxes(visionText, match);
                     Log.d(TAG, "   📦 Found " + preciseBoxes.size() + " precise character boxes");
 
+                    // FALLBACK: If no precise boxes found, use word-level boxes
+                    if (preciseBoxes.isEmpty()) {
+                        preciseBoxes = findWordBoxes(visionText, match);
+                        Log.d(TAG, "   🔄 Fallback: Found " + preciseBoxes.size() + " word boxes");
+                    }
+
                     for (Rect rect : preciseBoxes) {
                         if (rect != null && isValidRect(rect, censoredBitmap.getWidth(), censoredBitmap.getHeight())) {
 
@@ -295,6 +301,7 @@ public class ScreenshotProcessor {
 
     /**
      * PRECISE CHARACTER FINDER: Find exact character-level bounding boxes
+     * FIXED: Only processes elements that actually contain sensitive data
      */
     private List<Rect> findPreciseCharacterBoxes(Text visionText, SensitiveDataDetector.SensitiveMatch match) {
         List<Rect> preciseBoxes = new ArrayList<>();
@@ -304,6 +311,9 @@ public class ScreenshotProcessor {
         }
 
         String searchValue = match.value.trim();
+        // Normalize the match text for comparison
+        String normalizedMatch = normalizeText(searchValue);
+
         Log.d(TAG, "🔍 Looking for precise characters: '" + searchValue + "'");
 
         // Search through all text elements for character-level matches
@@ -319,16 +329,12 @@ public class ScreenshotProcessor {
                     String elementText = element.getText();
                     if (elementText == null) continue;
 
-                    // Check if this element contains our sensitive data
-                    if (containsSensitiveDataPrecise(elementText, searchValue, match.type)) {
+                    // ✅ ONLY process if element actually contains the sensitive data
+                    if (actuallyContainsSensitiveData(elementText, searchValue, match.type)) {
                         Rect elementBounds = element.getBoundingBox();
                         if (elementBounds != null) {
-
-                            // For elements that exactly match or contain the sensitive data,
-                            // calculate precise character boundaries
                             List<Rect> charBoxes = calculateCharacterBounds(elementText, searchValue, elementBounds, match.type);
                             preciseBoxes.addAll(charBoxes);
-
                             Log.d(TAG, "   ✅ Found in element: '" + elementText + "' -> " + charBoxes.size() + " char boxes");
                         }
                     }
@@ -341,8 +347,132 @@ public class ScreenshotProcessor {
     }
 
     /**
+     * FALLBACK: Find word-level boxes when character-level fails
+     */
+    private List<Rect> findWordBoxes(Text visionText, SensitiveDataDetector.SensitiveMatch match) {
+        List<Rect> wordBoxes = new ArrayList<>();
+        String searchValue = match.value.trim();
+        String normalizedMatch = normalizeText(searchValue);
+
+        for (Text.TextBlock block : visionText.getTextBlocks()) {
+            if (block == null) continue;
+
+            for (Text.Line line : block.getLines()) {
+                if (line == null) continue;
+
+                String lineText = line.getText();
+                if (lineText != null && normalizeText(lineText).contains(normalizedMatch)) {
+                    // Union all element boxes in this line
+                    Rect unionRect = null;
+                    for (Text.Element element : line.getElements()) {
+                        if (element.getBoundingBox() != null) {
+                            if (unionRect == null) {
+                                unionRect = new Rect(element.getBoundingBox());
+                            } else {
+                                unionRect.union(element.getBoundingBox());
+                            }
+                        }
+                    }
+                    if (unionRect != null) {
+                        wordBoxes.add(unionRect);
+                        Log.d(TAG, "   📝 Added word-level box for line: " + lineText);
+                    }
+                }
+            }
+        }
+
+        return wordBoxes;
+    }
+
+    /**
+     * Normalize text for better matching (handle OCR issues)
+     */
+    private String normalizeText(String text) {
+        if (text == null) return "";
+        return text.replaceAll("\\s+", "").toLowerCase();
+    }
+
+    /**
+     * IMPROVED: More precise matching logic to avoid false positives
+     */
+    private boolean actuallyContainsSensitiveData(String elementText, String sensitiveValue, String type) {
+        if (elementText == null || sensitiveValue == null) return false;
+
+        // Normalize both texts for comparison
+        String normalizedElement = normalizeText(elementText);
+        String normalizedSensitive = normalizeText(sensitiveValue);
+
+        // For exact matches first - most reliable
+        if (normalizedElement.equals(normalizedSensitive)) {
+            Log.d(TAG, "   ✅ Exact normalized match found: '" + elementText + "'");
+            return true;
+        }
+
+        // For phone numbers - match by digits only
+        if (type.contains("PHONE")) {
+            String elementDigits = elementText.replaceAll("[^0-9]", "");
+            String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
+            boolean match = elementDigits.length() >= 7 && sensitiveDigits.length() >= 7 &&
+                    elementDigits.equals(sensitiveDigits);
+            if (match) {
+                Log.d(TAG, "   📞 Phone digits match: '" + elementText + "' -> '" + elementDigits + "'");
+            }
+            return match;
+        }
+
+        // For credit cards - match by digits only
+        if (type.contains("CREDIT_CARD")) {
+            String elementDigits = elementText.replaceAll("[^0-9]", "");
+            String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
+            boolean match = elementDigits.length() >= 13 && sensitiveDigits.length() >= 13 &&
+                    elementDigits.equals(sensitiveDigits);
+            if (match) {
+                Log.d(TAG, "   💳 Credit card digits match: '" + elementText + "' -> '" + elementDigits + "'");
+            }
+            return match;
+        }
+
+        // For emails - check for exact match or contains with @
+        if (type.contains("EMAIL")) {
+            boolean match = (elementText.contains("@") && sensitiveValue.contains("@") &&
+                    normalizedElement.equals(normalizedSensitive)) ||
+                    (elementText.toLowerCase().contains(sensitiveValue.toLowerCase()) &&
+                            Math.abs(elementText.length() - sensitiveValue.length()) <= 2);
+            if (match) {
+                Log.d(TAG, "   📧 Email match: '" + elementText + "'");
+            }
+            return match;
+        }
+
+        // For SSN and ID numbers - exact match or very close match
+        if (type.contains("SSN") || type.contains("ID")) {
+            String elementClean = elementText.replaceAll("[^0-9]", "");
+            String sensitiveClean = sensitiveValue.replaceAll("[^0-9]", "");
+            boolean match = elementClean.equals(sensitiveClean) && elementClean.length() >= 9;
+            if (match) {
+                Log.d(TAG, "   🆔 ID/SSN match: '" + elementText + "' -> '" + elementClean + "'");
+            }
+            return match;
+        }
+
+        // For bank accounts - exact match or very close
+        if (type.contains("BANK")) {
+            String elementClean = elementText.replaceAll("[^0-9\\-]", "");
+            String sensitiveClean = sensitiveValue.replaceAll("[^0-9\\-]", "");
+            boolean match = elementClean.equals(sensitiveClean) && elementClean.length() >= 8;
+            if (match) {
+                Log.d(TAG, "   🏦 Bank account match: '" + elementText + "' -> '" + elementClean + "'");
+            }
+            return match;
+        }
+
+        Log.d(TAG, "   ❌ No match for '" + sensitiveValue + "' in '" + elementText + "'");
+        return false;
+    }
+
+    /**
      * CALCULATE COMPLETE SENSITIVE DATA BOUNDARIES within an element
-     * Covers the ENTIRE sensitive value (complete email, complete phone, etc.)
+     * FIXED: Only processes when we actually found the sensitive data
      */
     private List<Rect> calculateCharacterBounds(String elementText, String sensitiveValue, Rect elementBounds, String type) {
         List<Rect> charBoxes = new ArrayList<>();
@@ -399,11 +529,8 @@ public class ScreenshotProcessor {
                         elementText.substring(startIndex, endIndex) + "')");
             }
         } else {
-            // If we can't find the exact position, check if this element contains the sensitive data
-            if (containsSensitiveDataPrecise(elementText, sensitiveValue, type)) {
-                charBoxes.add(new Rect(elementBounds));
-                Log.d(TAG, "   ⚠️ Fallback - censoring entire element: " + elementText);
-            }
+            // ✅ FIXED: Don't censor if we can't find the sensitive data
+            Log.d(TAG, "   ❌ No precise match found - skipping element");
         }
 
         return charBoxes;
@@ -582,35 +709,6 @@ public class ScreenshotProcessor {
         Log.d(TAG, "   ❌ No match found for '" + sensitiveValue + "' in '" + elementText + "'");
         return -1;
     }
-
-    /**
-     * PRECISE matching for sensitive data in text elements
-     */
-    private boolean containsSensitiveDataPrecise(String text, String sensitiveText, String type) {
-        if (text == null || sensitiveText == null) return false;
-
-        // Clean both for comparison
-        String cleanText = text.replaceAll("[\\s\\-\\(\\)\\.]", "");
-        String cleanSensitive = sensitiveText.replaceAll("[\\s\\-\\(\\)\\.]", "");
-
-        if (type.contains("PHONE")) {
-            // For phones, compare digits only
-            String textDigits = text.replaceAll("[^0-9]", "");
-            String sensitiveDigits = sensitiveText.replaceAll("[^0-9]", "");
-
-            return textDigits.contains(sensitiveDigits) ||
-                    sensitiveDigits.contains(textDigits) ||
-                    textDigits.equals(sensitiveDigits);
-        } else {
-            // For other types, check if the text contains the sensitive data
-            return cleanText.contains(cleanSensitive) ||
-                    cleanSensitive.contains(cleanText) ||
-                    text.toLowerCase().contains(sensitiveText.toLowerCase()) ||
-                    sensitiveText.toLowerCase().contains(text.toLowerCase());
-        }
-    }
-
-    // ... [Keep all the other helper methods unchanged: fixImageOrientation, saveCensoredImage, etc.] ...
 
     private Bitmap fixImageOrientation(Bitmap bitmap, String imagePath) {
         try {
