@@ -8,6 +8,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.Switch;
@@ -17,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.example.screenscrubber.ScreenScrubber;
+import com.google.android.datatransport.backend.cct.BuildConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +42,9 @@ public class MainActivity extends AppCompatActivity {
 
         // Initialize views
         initializeViews();
+        if (BuildConfig.DEBUG) {
+            Log.d("ScreenScrubber", "Debug logging enabled");
+        }
 
         // Initialize ScreenScrubber
         screenScrubber = new ScreenScrubber(this);

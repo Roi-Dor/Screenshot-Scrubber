@@ -25,7 +25,7 @@ public class TestDataActivity extends AppCompatActivity {
                 "📊 US SENSITIVE DATA:\n" +
                 "Credit Card: 4532 1234 5678 9012\n" +
                 "SSN: 123-45-6789\n" +
-                "Phone: (555) 123-4567\n" +
+                "Phone: 5551234567\n" +
                 "Email: john.doe@example.com\n\n" +
                 "🇮🇱 ISRAELI SENSITIVE DATA:\n" +
                 "ID Number: 123456782\n" +
