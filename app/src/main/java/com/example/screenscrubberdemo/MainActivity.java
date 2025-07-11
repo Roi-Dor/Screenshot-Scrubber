@@ -17,8 +17,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.example.screenscrubber.ScreenScrubber;
-import com.example.screenscrubber.NotificationHelper;
-import com.example.screenscrubber.ScreenScrubberManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,13 +28,10 @@ public class MainActivity extends AppCompatActivity {
     private ScreenScrubber screenScrubber;
     private Button toggleButton;
     private Button testDataButton;
-    private Button statsButton;
-    private Button scanRecentButton;
     private Switch screenshotSwitch;
     private Switch photoSwitch;
     private TextView statusText;
     private TextView configText;
-    private TextView statsText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,13 +52,10 @@ public class MainActivity extends AppCompatActivity {
     private void initializeViews() {
         toggleButton = findViewById(R.id.toggleButton);
         testDataButton = findViewById(R.id.testDataButton);
-        statsButton = findViewById(R.id.statsButton);
-        scanRecentButton = findViewById(R.id.scanRecentButton);
         screenshotSwitch = findViewById(R.id.screenshotSwitch);
         photoSwitch = findViewById(R.id.photoSwitch);
         statusText = findViewById(R.id.statusText);
         configText = findViewById(R.id.configText);
-        statsText = findViewById(R.id.statsText);
 
         // Set default switch states
         screenshotSwitch.setChecked(true);
@@ -73,8 +65,6 @@ public class MainActivity extends AppCompatActivity {
     private void setupClickListeners() {
         toggleButton.setOnClickListener(v -> toggleProtection());
         testDataButton.setOnClickListener(v -> openTestDataScreen());
-        statsButton.setOnClickListener(v -> showStats());
-        scanRecentButton.setOnClickListener(v -> scanRecentImages());
 
         // Switch listeners
         screenshotSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
@@ -122,9 +112,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateMonitoringOptions() {
-        // Only update if monitoring is active
         if (!screenScrubber.isActive()) {
-            // Just validate the selection but don't update monitoring yet
             boolean screenshots = screenshotSwitch.isChecked();
             boolean photos = photoSwitch.isChecked();
 
@@ -207,84 +195,10 @@ public class MainActivity extends AppCompatActivity {
             screenshotSwitch.setChecked(config.monitoringScreenshots);
             photoSwitch.setChecked(config.monitoringPhotos);
         }
-        // Note: Don't update switches when inactive to preserve user selection
 
         // Always keep switches enabled so users can configure before starting
         screenshotSwitch.setEnabled(true);
         photoSwitch.setEnabled(true);
-
-        // Update stats
-        updateStatsDisplay();
-    }
-
-    private void updateStatsDisplay() {
-        try {
-            ScreenScrubberManager.ProcessingStats stats = screenScrubber.getStats();
-
-            if (stats.totalProcessed > 0) {
-                StringBuilder statsStr = new StringBuilder("📊 Statistics:\n");
-                statsStr.append("Total Processed: ").append(stats.totalProcessed).append("\n");
-                statsStr.append("Screenshots: ").append(stats.screenshotsProcessed).append("\n");
-                statsStr.append("Photos: ").append(stats.cameraPhotosProcessed).append("\n");
-                statsStr.append("Success Rate: ").append(String.format("%.1f%%", stats.getSuccessRate() * 100)).append("\n");
-                statsStr.append("Avg Time: ").append(stats.averageProcessingTime).append("ms");
-
-                statsText.setText(statsStr.toString());
-                statsText.setVisibility(View.VISIBLE);
-            } else {
-                statsText.setVisibility(View.GONE);
-            }
-        } catch (Exception e) {
-            statsText.setVisibility(View.GONE);
-        }
-    }
-
-    private void showStats() {
-        try {
-            ScreenScrubberManager.ProcessingStats stats = screenScrubber.getStats();
-
-            if (stats.totalProcessed == 0) {
-                Toast.makeText(this, "📊 No images processed yet", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            StringBuilder message = new StringBuilder("📊 Detailed Statistics:\n\n");
-            message.append("Total Images: ").append(stats.totalProcessed).append("\n");
-            message.append("Screenshots: ").append(stats.screenshotsProcessed).append("\n");
-            message.append("Camera Photos: ").append(stats.cameraPhotosProcessed).append("\n");
-            message.append("Successful: ").append(stats.successfullyProcessed).append("\n");
-            message.append("Success Rate: ").append(String.format("%.1f%%", stats.getSuccessRate() * 100)).append("\n");
-            message.append("Average Time: ").append(stats.averageProcessingTime).append("ms\n");
-            message.append("Total Time: ").append(stats.totalProcessingTime).append("ms");
-
-            new androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("📊 Processing Statistics")
-                    .setMessage(message.toString())
-                    .setPositiveButton("OK", null)
-                    .setNeutralButton("Reset", (dialog, which) -> {
-                        screenScrubber.resetStats();
-                        updateUI();
-                        Toast.makeText(this, "📊 Statistics reset", Toast.LENGTH_SHORT).show();
-                    })
-                    .show();
-
-        } catch (Exception e) {
-            Toast.makeText(this, "❌ Error showing statistics: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void scanRecentImages() {
-        if (!screenScrubber.isActive()) {
-            Toast.makeText(this, "⚠️ Start protection first to scan recent images", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        try {
-            screenScrubber.scanRecentImages();
-            Toast.makeText(this, "🔍 Scanning recent images (last 2 hours)...", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "❌ Error scanning recent images: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
     }
 
     private void openTestDataScreen() {
@@ -389,7 +303,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        updateUI(); // Update UI when returning to the app
+        updateUI();
     }
 
     @Override
@@ -400,65 +314,33 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Show feature demo dialog
-     */
-    private void showFeatureDemo() {
-        new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("🎯 ScreenScrubber Features")
-                .setMessage("Enhanced Features:\n\n" +
-                        "📱 Screenshot Monitoring\n" +
-                        "• Automatically detects screenshots\n" +
-                        "• Scans for sensitive data\n" +
-                        "• Deletes original if sensitive data found\n\n" +
-                        "📷 Camera Photo Monitoring\n" +
-                        "• Monitors new photos from camera\n" +
-                        "• Scans for sensitive data\n" +
-                        "• Keeps original, saves censored version\n\n" +
-                        "🔍 Sensitive Data Detection\n" +
-                        "• US: Credit cards, SSN, phone numbers\n" +
-                        "• Israeli: ID numbers, phones, bank accounts\n" +
-                        "• Universal: Email addresses\n\n" +
-                        "🛡️ Privacy Protection\n" +
-                        "• All processing done on device\n" +
-                        "• No data sent to servers\n" +
-                        "• Instant notifications\n\n" +
-                        "📊 Statistics & Monitoring\n" +
-                        "• Real-time processing stats\n" +
-                        "• Success rate tracking\n" +
-                        "• Performance metrics")
-                .setPositiveButton("Got it!", null)
-                .show();
-    }
-
     @Override
     public boolean onCreateOptionsMenu(android.view.Menu menu) {
-        menu.add(0, 1, 0, "Show Features").setIcon(android.R.drawable.ic_menu_info_details);
-        menu.add(0, 2, 0, "Test Library").setIcon(android.R.drawable.ic_menu_manage);
+        menu.add(0, 1, 0, "About").setIcon(android.R.drawable.ic_menu_info_details);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(android.view.MenuItem item) {
-        switch (item.getItemId()) {
-            case 1:
-                showFeatureDemo();
-                return true;
-            case 2:
-                testLibraryWithSampleImage();
-                return true;
-            default:
-                return super.onOptionsItemSelected(item);
+        if (item.getItemId() == 1) {
+            showAboutDialog();
+            return true;
         }
+        return super.onOptionsItemSelected(item);
     }
 
-    /**
-     * Test the library with a sample image
-     */
-    private void testLibraryWithSampleImage() {
-        // For demo purposes, we'll test with the test data screen
-        Toast.makeText(this, "🧪 Use 'Test Data Screen' to test the library", Toast.LENGTH_SHORT).show();
-        openTestDataScreen();
+    private void showAboutDialog() {
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🛡️ ScreenScrubber")
+                .setMessage("Privacy Protection Library\n\n" +
+                        "Features:\n" +
+                        "• Automatic screenshot monitoring\n" +
+                        "• Camera photo monitoring\n" +
+                        "• Sensitive data detection (US & Israeli)\n" +
+                        "• Automatic censoring\n" +
+                        "• On-device processing\n\n" +
+                        "Version: 2.0 Simplified")
+                .setPositiveButton("OK", null)
+                .show();
     }
 }
-

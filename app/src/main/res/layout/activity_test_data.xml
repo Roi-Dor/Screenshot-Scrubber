@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="🧪 ScreenScrubber Test Lab"
+        android:text="🧪 ScreenScrubber Test Data"
         android:textSize="20sp"
         android:textStyle="bold"
         android:textColor="#2196F3"
@@ -24,13 +24,13 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="📋 Sample Data &amp; Test Results (Long-press to run tests)"
+        android:text="📋 Sample Data (Take a screenshot to test detection)"
         android:textSize="16sp"
         android:textStyle="bold"
         android:textColor="#333333"
         android:layout_marginBottom="8dp" />
 
-    <!-- Sample Data / Results Area -->
+    <!-- Sample Data Area -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -51,25 +51,11 @@
 
     </ScrollView>
 
-    <!-- Optional Test Button (you can uncomment if needed) -->
-
-    <Button
-        android:id="@+id/runTestsButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="🔬 Run Tests"
-        android:textColor="@android:color/white"
-        android:background="#2196F3"
-        android:layout_marginTop="16dp"
-        android:padding="12dp"
-        android:elevation="2dp" />
-
-
     <!-- Footer Info -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="💡 Long-press the text area above to run automated validation tests"
+        android:text="💡 Make sure protection is enabled, then take a screenshot of this screen"
         android:textSize="12sp"
         android:textColor="#666666"
         android:gravity="center"

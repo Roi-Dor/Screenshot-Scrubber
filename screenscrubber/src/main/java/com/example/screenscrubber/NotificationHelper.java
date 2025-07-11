@@ -12,7 +12,7 @@ import androidx.core.app.NotificationManagerCompat;
 import java.util.List;
 
 /**
- * Enhanced notification helper that supports different image types (screenshots, camera photos)
+ * Simplified notification helper for ScreenScrubber
  */
 public class NotificationHelper {
     private static final String TAG = "NotificationHelper";
@@ -51,66 +51,62 @@ public class NotificationHelper {
             return ActivityCompat.checkSelfPermission(context,
                     android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         }
-        return true; // Older Android versions don't need this permission
+        return true;
     }
 
     /**
-     * Show sensitive data alert with image type awareness
+     * Show detailed sensitive data alert with icons and types
      */
-    public void showSensitiveDataAlert(List<SensitiveDataDetector.SensitiveMatch> matches, String imageType) {
+    public void showDetailedSensitiveDataAlert(List<SensitiveDataDetector.SensitiveMatch> matches, String imageType) {
         if (!hasNotificationPermission()) {
             Log.w(TAG, "No notification permission - cannot show alert");
             return;
         }
 
-        StringBuilder message = new StringBuilder("Detected: ");
+        StringBuilder message = new StringBuilder();
+        StringBuilder detailedMessage = new StringBuilder();
+
+        detailedMessage.append("Sensitive data detected in your ").append(imageType.toLowerCase()).append(":\n\n");
+
         for (int i = 0; i < matches.size(); i++) {
+            SensitiveDataDetector.SensitiveMatch match = matches.get(i);
+            String emoji = getEmojiIcon(match.type);
+            String displayName = getDisplayName(match.type);
+
             if (i > 0) message.append(", ");
-            message.append(getDisplayName(matches.get(i).type));
+            message.append(emoji).append(" ").append(displayName);
+
+            detailedMessage.append(emoji).append(" ").append(displayName);
+            if (match.confidence < 1.0) {
+                detailedMessage.append(" (").append(String.format("%.0f%% confidence", match.confidence * 100)).append(")");
+            }
+            detailedMessage.append("\n");
         }
 
-        String title = "⚠️ Sensitive Data Protected";
-        String contentText = message.toString();
+        detailedMessage.append("\n🗑️ Original ").append(imageType.toLowerCase()).append(" deleted");
+        detailedMessage.append("\n💾 Safe version saved to Pictures/ScreenScrubber_Censored");
 
-        // Create different messages for different image types
-        String bigTextMessage;
-        if (imageType.toLowerCase().contains("screenshot")) {
-            bigTextMessage = "Sensitive data was detected and censored in your screenshot. " +
-                    "Original deleted, safe version saved to Pictures/ScreenScrubber_Censored.";
-        } else if (imageType.toLowerCase().contains("photo")) {
-            bigTextMessage = "Sensitive data was detected and censored in your photo. " +
-                    "Original deleted, safe censored version saved to Pictures/ScreenScrubber_Censored.";
-        } else {
-            bigTextMessage = "Sensitive data was detected and censored in your image. " +
-                    "Original deleted, safe version saved to Pictures/ScreenScrubber_Censored.";
-        }
+        String title = "🛡️ Sensitive Data Protected";
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle(title)
-                .setContentText(contentText)
+                .setContentText(message.toString())
                 .setStyle(new NotificationCompat.BigTextStyle()
-                        .bigText(bigTextMessage))
+                        .bigText(detailedMessage.toString()))
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setAutoCancel(true);
 
         try {
             notificationManager.notify(NOTIFICATION_ID, builder.build());
-            Log.d(TAG, "Sensitive data notification sent for " + imageType);
+            Log.d(TAG, "Detailed sensitive data notification sent for " + imageType);
         } catch (SecurityException e) {
             Log.e(TAG, "Failed to show notification - permission denied", e);
         }
     }
 
     /**
-     * Backward compatibility method for screenshots
-     */
-    public void showSensitiveDataAlert(List<SensitiveDataDetector.SensitiveMatch> matches) {
-        showSensitiveDataAlert(matches, "Screenshot");
-    }
-
-    /**
-     * Show clean image notification with image type awareness
+     * Show clean image notification
      */
     public void showCleanImageNotification(String imageType) {
         if (!hasNotificationPermission()) {
@@ -133,91 +129,6 @@ public class NotificationHelper {
             Log.d(TAG, "Clean " + imageType + " notification sent");
         } catch (SecurityException e) {
             Log.e(TAG, "Failed to show notification - permission denied", e);
-        }
-    }
-
-    /**
-     * Backward compatibility method for screenshots
-     */
-    public void showCleanScreenshotNotification() {
-        showCleanImageNotification("Screenshot");
-    }
-
-    /**
-     * Show monitoring status notification
-     */
-    public void showMonitoringStatusNotification(boolean screenshots, boolean photos) {
-        if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show monitoring status");
-            return;
-        }
-
-        String title = "🛡️ ScreenScrubber Active";
-        StringBuilder message = new StringBuilder("Monitoring: ");
-
-        if (screenshots && photos) {
-            message.append("Screenshots & Photos");
-        } else if (screenshots) {
-            message.append("Screenshots Only");
-        } else if (photos) {
-            message.append("Photos Only");
-        } else {
-            message.append("None");
-        }
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_menu_view)
-                .setContentTitle(title)
-                .setContentText(message.toString())
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(true) // Make it persistent
-                .setAutoCancel(false);
-
-        try {
-            notificationManager.notify(NOTIFICATION_ID + 1, builder.build());
-            Log.d(TAG, "Monitoring status notification sent");
-        } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show monitoring notification - permission denied", e);
-        }
-    }
-
-    /**
-     * Hide monitoring status notification
-     */
-    public void hideMonitoringStatusNotification() {
-        try {
-            notificationManager.cancel(NOTIFICATION_ID + 1);
-            Log.d(TAG, "Monitoring status notification hidden");
-        } catch (Exception e) {
-            Log.e(TAG, "Error hiding monitoring notification", e);
-        }
-    }
-
-    /**
-     * Show batch processing complete notification
-     */
-    public void showBatchProcessingCompleteNotification(int totalImages, int sensitiveImages) {
-        if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show batch processing notification");
-            return;
-        }
-
-        String title = "📊 Batch Processing Complete";
-        String contentText = String.format("Processed %d images, %d contained sensitive data",
-                totalImages, sensitiveImages);
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(contentText)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true);
-
-        try {
-            notificationManager.notify(NOTIFICATION_ID + 2, builder.build());
-            Log.d(TAG, "Batch processing notification sent");
-        } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show batch processing notification - permission denied", e);
         }
     }
 
@@ -251,49 +162,6 @@ public class NotificationHelper {
     }
 
     /**
-     * Show statistics notification
-     */
-    public void showStatisticsNotification(ScreenScrubberManager.ProcessingStats stats) {
-        if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show statistics notification");
-            return;
-        }
-
-        String title = "📈 ScreenScrubber Statistics";
-        String contentText = String.format("Processed %d images (%.1f%% success rate)",
-                stats.totalProcessed, stats.getSuccessRate() * 100);
-
-        String bigText = String.format(
-                "Total Images: %d\n" +
-                        "Screenshots: %d\n" +
-                        "Photos: %d\n" +
-                        "Success Rate: %.1f%%\n" +
-                        "Average Processing Time: %dms",
-                stats.totalProcessed,
-                stats.screenshotsProcessed,
-                stats.cameraPhotosProcessed,
-                stats.getSuccessRate() * 100,
-                stats.averageProcessingTime
-        );
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(contentText)
-                .setStyle(new NotificationCompat.BigTextStyle()
-                        .bigText(bigText))
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setAutoCancel(true);
-
-        try {
-            notificationManager.notify(NOTIFICATION_ID + 4, builder.build());
-            Log.d(TAG, "Statistics notification sent");
-        } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show statistics notification - permission denied", e);
-        }
-    }
-
-    /**
      * Clear all notifications
      */
     public void clearAllNotifications() {
@@ -317,8 +185,6 @@ public class NotificationHelper {
             case "ISRAELI_PHONE": return "Israeli Phone";
             case "ISRAELI_BANK_ACCOUNT": return "Israeli Bank Account";
             case "EMAIL": return "Email";
-            case "SSN": return "SSN"; // Backward compatibility
-            case "PHONE": return "Phone"; // Backward compatibility
             default: return type.replace("_", " ");
         }
     }
@@ -330,70 +196,12 @@ public class NotificationHelper {
         switch (type) {
             case "CREDIT_CARD": return "💳";
             case "US_SSN":
-            case "ISRAELI_ID":
-            case "SSN": return "🆔";
+            case "ISRAELI_ID": return "🆔";
             case "US_PHONE":
-            case "ISRAELI_PHONE":
-            case "PHONE": return "📞";
+            case "ISRAELI_PHONE": return "📞";
             case "ISRAELI_BANK_ACCOUNT": return "🏦";
             case "EMAIL": return "📧";
             default: return "🔒";
-        }
-    }
-
-    /**
-     * Show detailed sensitive data notification with icons
-     */
-    public void showDetailedSensitiveDataAlert(List<SensitiveDataDetector.SensitiveMatch> matches, String imageType) {
-        if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show detailed alert");
-            return;
-        }
-
-        StringBuilder message = new StringBuilder();
-        StringBuilder detailedMessage = new StringBuilder();
-
-        detailedMessage.append("Sensitive data detected in your ").append(imageType.toLowerCase()).append(":\n\n");
-
-        for (int i = 0; i < matches.size(); i++) {
-            SensitiveDataDetector.SensitiveMatch match = matches.get(i);
-            String emoji = getEmojiIcon(match.type);
-            String displayName = getDisplayName(match.type);
-
-            if (i > 0) message.append(", ");
-            message.append(emoji).append(" ").append(displayName);
-
-            detailedMessage.append(emoji).append(" ").append(displayName);
-            if (match.confidence < 1.0) {
-                detailedMessage.append(" (").append(String.format("%.0f%% confidence", match.confidence * 100)).append(")");
-            }
-            detailedMessage.append("\n");
-        }
-
-        if (imageType.toLowerCase().contains("screenshot")) {
-            detailedMessage.append("\n🗑️ Original screenshot deleted");
-        } else if (imageType.toLowerCase().contains("photo")) {
-            detailedMessage.append("\n🗑️ Original photo deleted");
-        }
-
-        detailedMessage.append("\n💾 Safe version saved to Pictures/ScreenScrubber_Censored");
-
-        String title = "🛡️ Sensitive Data Protected";
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle(title)
-                .setContentText(message.toString())
-                .setStyle(new NotificationCompat.BigTextStyle()
-                        .bigText(detailedMessage.toString()))
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true);
-
-        try {
-            notificationManager.notify(NOTIFICATION_ID, builder.build());
-            Log.d(TAG, "Detailed sensitive data notification sent for " + imageType);
-        } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show detailed notification - permission denied", e);
         }
     }
 }
