@@ -1,39 +1,40 @@
 package com.example.screenscrubber;
 
 import android.content.ContentResolver;
-import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
-import android.content.Intent;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.media.ExifInterface;
 import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Log;
 import com.google.mlkit.vision.text.Text;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.util.List;
 import java.util.ArrayList;
 
+/**
+ * Image processing and file operations ONLY
+ * - File validation
+ * - Image censoring
+ * - File saving/deleting
+ * - MediaStore operations
+ */
 public class ScreenshotProcessor {
     private static final String TAG = "ScreenshotProcessor";
     private static final String CENSORED_FOLDER = "ScreenScrubber_Censored";
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB max
     private static final int MAX_IMAGE_DIMENSION = 4096; // Max width/height
 
-    private SensitiveDataDetector sensitiveDataDetector;
-    private Context context;
+    private final SensitiveDataDetector sensitiveDataDetector;
+    private final Context context;
 
     public static class ProcessingResult {
         public final boolean hasSensitiveData;
@@ -66,43 +67,30 @@ public class ScreenshotProcessor {
 
         public static ProcessingResult error(String errorMessage, String originalImagePath,
                                              MediaObserver.ImageType imageType) {
-            return new ProcessingResult(false, null, new ArrayList<>(), originalImagePath, false, errorMessage, imageType);
+            return new ProcessingResult(false, null, new ArrayList<>(), originalImagePath,
+                    false, errorMessage, imageType);
         }
     }
 
-    public ScreenshotProcessor() {
+    public ScreenshotProcessor(Context context) {
+        this.context = context;
         this.sensitiveDataDetector = new SensitiveDataDetector();
     }
 
-    public void setContext(Context context) {
-        this.context = context;
-    }
-
     /**
-     * Enhanced processing pipeline for different image types
+     * Complete image processing pipeline with ALL validation
      */
     public ProcessingResult processImage(String imagePath, Text visionText, MediaObserver.ImageType imageType) {
         long startTime = System.currentTimeMillis();
 
-        // Input validation
-        if (imagePath == null || imagePath.isEmpty()) {
-            Log.e(TAG, "Invalid image path provided");
-            return ProcessingResult.error("Invalid image path", null, imageType);
-        }
-
-        File imageFile = new File(imagePath);
-        if (!imageFile.exists()) {
-            Log.e(TAG, "Image file does not exist: " + imagePath);
-            return ProcessingResult.error("Image file not found", imagePath, imageType);
-        }
-
-        if (visionText == null) {
-            Log.e(TAG, "Vision text is null");
-            return ProcessingResult.error("Text extraction failed", imagePath, imageType);
+        // Step 1: Validate ALL inputs and file conditions
+        ProcessingResult validationResult = validateInputs(imagePath, visionText, imageType);
+        if (!validationResult.success) {
+            return validationResult;
         }
 
         try {
-            // Step 1: Extract and analyze text for sensitive data
+            // Step 2: Extract and analyze text for sensitive data
             String fullText = visionText.getText();
             Log.d(TAG, "Analyzing text from " + imageType + ": " + imagePath);
 
@@ -113,14 +101,9 @@ public class ScreenshotProcessor {
             } else {
                 sensitiveMatches = sensitiveDataDetector.detectSensitiveData(fullText);
                 Log.d(TAG, "Found " + sensitiveMatches.size() + " sensitive data matches");
-
-                // Log findings safely
-                for (SensitiveDataDetector.SensitiveMatch match : sensitiveMatches) {
-                    Log.d(TAG, "Detected: " + match.type + " - " + maskSensitiveValue(match.value, match.type));
-                }
             }
 
-            // Step 2: Process based on findings
+            // Step 3: Process based on findings
             ProcessingResult result;
             if (sensitiveMatches.isEmpty()) {
                 Log.d(TAG, "No sensitive data found in " + imageType + " - keeping original");
@@ -144,7 +127,70 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * PRECISE CENSORING: Create censored version with character-level precision
+     * COMPREHENSIVE input and file validation - single responsibility
+     */
+    private ProcessingResult validateInputs(String imagePath, Text visionText, MediaObserver.ImageType imageType) {
+        // Basic parameter validation
+        if (imagePath == null || imagePath.isEmpty()) {
+            Log.e(TAG, "Invalid image path provided");
+            return ProcessingResult.error("Invalid image path", null, imageType);
+        }
+
+        if (visionText == null) {
+            Log.e(TAG, "Vision text is null");
+            return ProcessingResult.error("Text extraction failed", imagePath, imageType);
+        }
+
+        // File existence and properties
+        File imageFile = new File(imagePath);
+        if (!imageFile.exists()) {
+            Log.e(TAG, "Image file does not exist: " + imagePath);
+            return ProcessingResult.error("Image file not found", imagePath, imageType);
+        }
+
+        if (!imageFile.canRead()) {
+            Log.w(TAG, "Cannot read image file: " + imagePath);
+            return ProcessingResult.error("Cannot read image file", imagePath, imageType);
+        }
+
+        long fileSize = imageFile.length();
+        if (fileSize == 0) {
+            Log.w(TAG, "Image file is empty: " + imagePath);
+            return ProcessingResult.error("Image file is empty", imagePath, imageType);
+        }
+
+        if (fileSize > MAX_FILE_SIZE) {
+            Log.w(TAG, "Image file too large: " + fileSize + " bytes (max: " + MAX_FILE_SIZE + ")");
+            return ProcessingResult.error("Image file too large", imagePath, imageType);
+        }
+
+        // Try to decode the image to verify it's valid
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(imagePath, options);
+
+            if (options.outWidth <= 0 || options.outHeight <= 0) {
+                Log.e(TAG, "Invalid image dimensions: " + options.outWidth + "x" + options.outHeight);
+                return ProcessingResult.error("Invalid image format", imagePath, imageType);
+            }
+
+            if (options.outWidth > MAX_IMAGE_DIMENSION || options.outHeight > MAX_IMAGE_DIMENSION) {
+                Log.w(TAG, "Large image detected: " + options.outWidth + "x" + options.outHeight);
+                // This is just a warning, not an error - we can handle large images
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error validating image format", e);
+            return ProcessingResult.error("Cannot decode image", imagePath, imageType);
+        }
+
+        // All validation passed
+        return ProcessingResult.success(false, null, new ArrayList<>(), imagePath, imageType);
+    }
+
+    /**
+     * Create censored version - focus on image processing operations
      */
     private ProcessingResult createCensoredVersion(String imagePath, Text visionText,
                                                    List<SensitiveDataDetector.SensitiveMatch> sensitiveMatches,
@@ -153,25 +199,14 @@ public class ScreenshotProcessor {
         Bitmap censoredBitmap = null;
 
         try {
-            // Load original image
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(imagePath, options);
-
-            if (options.outWidth > MAX_IMAGE_DIMENSION || options.outHeight > MAX_IMAGE_DIMENSION) {
-                Log.w(TAG, "Large image detected: " + options.outWidth + "x" + options.outHeight);
-                options.inSampleSize = calculateInSampleSize(options, MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION);
-            }
-
-            options.inJustDecodeBounds = false;
-            originalBitmap = BitmapFactory.decodeFile(imagePath, options);
-
+            // Load and potentially resize image
+            originalBitmap = loadOptimizedBitmap(imagePath);
             if (originalBitmap == null) {
                 Log.e(TAG, "Could not load original image");
                 return ProcessingResult.error("Could not load image", imagePath, imageType);
             }
 
-            // Create censored bitmap with PRECISE character-level redaction
+            // Create censored bitmap with precise character-level redaction
             censoredBitmap = createPreciseCensoredImage(originalBitmap, visionText, sensitiveMatches);
             if (censoredBitmap == null) {
                 return ProcessingResult.error("Failed to create censored image", imagePath, imageType);
@@ -187,16 +222,16 @@ public class ScreenshotProcessor {
                 }
             }
 
-            // Save the final censored image
+            // Save the censored image
             String censoredPath = saveCensoredImage(finalBitmap, imagePath, imageType);
             if (censoredPath == null) {
                 return ProcessingResult.error("Failed to save censored image", imagePath, imageType);
             }
 
-            // Handle original image
-            boolean originalHandled = handleOriginalImage(imagePath, imageType);
-            if (!originalHandled) {
-                Log.w(TAG, "Could not handle original " + imageType + ", but continuing");
+            // Delete original image
+            boolean originalDeleted = deleteOriginalImage(imagePath);
+            if (!originalDeleted) {
+                Log.w(TAG, "Could not delete original " + imageType + ", but continuing");
             }
 
             return ProcessingResult.success(true, censoredPath, sensitiveMatches, imagePath, imageType);
@@ -216,8 +251,30 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * PRECISE CHARACTER-LEVEL CENSORING with FALLBACK to word-level boxes
-     * This method creates precise bounding boxes for only the sensitive characters
+     * Load bitmap with optimization for large images
+     */
+    private Bitmap loadOptimizedBitmap(String imagePath) {
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(imagePath, options);
+
+            if (options.outWidth > MAX_IMAGE_DIMENSION || options.outHeight > MAX_IMAGE_DIMENSION) {
+                Log.w(TAG, "Large image detected: " + options.outWidth + "x" + options.outHeight);
+                options.inSampleSize = calculateInSampleSize(options, MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION);
+            }
+
+            options.inJustDecodeBounds = false;
+            return BitmapFactory.decodeFile(imagePath, options);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading optimized bitmap", e);
+            return null;
+        }
+    }
+
+    /**
+     * Create precise censored image with character-level accuracy
      */
     private Bitmap createPreciseCensoredImage(Bitmap originalBitmap, Text visionText,
                                               List<SensitiveDataDetector.SensitiveMatch> sensitiveMatches) {
@@ -227,9 +284,7 @@ public class ScreenshotProcessor {
             return null;
         }
 
-        Log.d(TAG, "🎯 Creating PRECISE censored image");
-        Log.d(TAG, "   📏 Image dimensions: " + originalBitmap.getWidth() + "x" + originalBitmap.getHeight());
-        Log.d(TAG, "   🔍 Sensitive matches: " + sensitiveMatches.size());
+        Log.d(TAG, "Creating precise censored image - " + sensitiveMatches.size() + " matches to process");
 
         Bitmap censoredBitmap = null;
         Canvas canvas = null;
@@ -250,24 +305,23 @@ public class ScreenshotProcessor {
 
             int censoredCount = 0;
 
-            // For each sensitive match, find PRECISE character boundaries
+            // For each sensitive match, find precise character boundaries
             for (SensitiveDataDetector.SensitiveMatch match : sensitiveMatches) {
                 try {
-                    Log.d(TAG, "🎯 Processing match: " + match.type + " = '" + match.value + "'");
+                    Log.d(TAG, "Processing match: " + match.type);
 
                     List<Rect> preciseBoxes = findPreciseCharacterBoxes(visionText, match);
-                    Log.d(TAG, "   📦 Found " + preciseBoxes.size() + " precise character boxes");
+                    Log.d(TAG, "Found " + preciseBoxes.size() + " precise character boxes");
 
-                    // FALLBACK: If no precise boxes found, use word-level boxes
+                    // Fallback: If no precise boxes found, use word-level boxes
                     if (preciseBoxes.isEmpty()) {
                         preciseBoxes = findWordBoxes(visionText, match);
-                        Log.d(TAG, "   🔄 Fallback: Found " + preciseBoxes.size() + " word boxes");
+                        Log.d(TAG, "Fallback: Found " + preciseBoxes.size() + " word boxes");
                     }
 
                     for (Rect rect : preciseBoxes) {
                         if (rect != null && isValidRect(rect, censoredBitmap.getWidth(), censoredBitmap.getHeight())) {
-
-                            // Add minimal padding (just 2-4 pixels for better coverage)
+                            // Add minimal padding for better coverage
                             int padding = 3;
                             Rect paddedRect = new Rect(
                                     Math.max(0, rect.left - padding),
@@ -278,16 +332,14 @@ public class ScreenshotProcessor {
 
                             canvas.drawRect(paddedRect, blackPaint);
                             censoredCount++;
-
-                            Log.d(TAG, "   ✅ Censored precise area: " + paddedRect.toString());
                         }
                     }
                 } catch (Exception e) {
-                    Log.e(TAG, "❌ Error censoring match: " + match.type, e);
+                    Log.e(TAG, "Error censoring match: " + match.type, e);
                 }
             }
 
-            Log.d(TAG, "🎨 Successfully censored " + censoredCount + " precise areas");
+            Log.d(TAG, "Successfully censored " + censoredCount + " precise areas");
             return censoredBitmap;
 
         } catch (Exception e) {
@@ -300,8 +352,7 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * PRECISE CHARACTER FINDER: Find exact character-level bounding boxes
-     * FIXED: Only processes elements that actually contain sensitive data
+     * Find precise character-level bounding boxes
      */
     private List<Rect> findPreciseCharacterBoxes(Text visionText, SensitiveDataDetector.SensitiveMatch match) {
         List<Rect> preciseBoxes = new ArrayList<>();
@@ -311,10 +362,6 @@ public class ScreenshotProcessor {
         }
 
         String searchValue = match.value.trim();
-        // Normalize the match text for comparison
-        String normalizedMatch = normalizeText(searchValue);
-
-        Log.d(TAG, "🔍 Looking for precise characters: '" + searchValue + "'");
 
         // Search through all text elements for character-level matches
         for (Text.TextBlock block : visionText.getTextBlocks()) {
@@ -329,25 +376,23 @@ public class ScreenshotProcessor {
                     String elementText = element.getText();
                     if (elementText == null) continue;
 
-                    // ✅ ONLY process if element actually contains the sensitive data
+                    // Only process if element actually contains the sensitive data
                     if (actuallyContainsSensitiveData(elementText, searchValue, match.type)) {
                         Rect elementBounds = element.getBoundingBox();
                         if (elementBounds != null) {
                             List<Rect> charBoxes = calculateCharacterBounds(elementText, searchValue, elementBounds, match.type);
                             preciseBoxes.addAll(charBoxes);
-                            Log.d(TAG, "   ✅ Found in element: '" + elementText + "' -> " + charBoxes.size() + " char boxes");
                         }
                     }
                 }
             }
         }
 
-        Log.d(TAG, "🎯 Total precise boxes found: " + preciseBoxes.size());
         return preciseBoxes;
     }
 
     /**
-     * FALLBACK: Find word-level boxes when character-level fails
+     * Fallback: Find word-level boxes when character-level fails
      */
     private List<Rect> findWordBoxes(Text visionText, SensitiveDataDetector.SensitiveMatch match) {
         List<Rect> wordBoxes = new ArrayList<>();
@@ -375,7 +420,6 @@ public class ScreenshotProcessor {
                     }
                     if (unionRect != null) {
                         wordBoxes.add(unionRect);
-                        Log.d(TAG, "   📝 Added word-level box for line: " + lineText);
                     }
                 }
             }
@@ -385,177 +429,162 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * Normalize text for better matching (handle OCR issues)
-     */
-    private String normalizeText(String text) {
-        if (text == null) return "";
-        return text.replaceAll("\\s+", "").toLowerCase();
-    }
-
-    /**
-     * IMPROVED: More precise matching logic to avoid false positives
+     * Precise matching logic to avoid false positives
      */
     private boolean actuallyContainsSensitiveData(String elementText, String sensitiveValue, String type) {
         if (elementText == null || sensitiveValue == null) return false;
 
-        // Normalize both texts for comparison
         String normalizedElement = normalizeText(elementText);
         String normalizedSensitive = normalizeText(sensitiveValue);
 
-        // For exact matches first - most reliable
+        // For exact matches first
         if (normalizedElement.equals(normalizedSensitive)) {
-            Log.d(TAG, "   ✅ Exact normalized match found: '" + elementText + "'");
             return true;
         }
 
-        // For phone numbers - match by digits only
+        // Type-specific matching
         if (type.contains("PHONE")) {
             String elementDigits = elementText.replaceAll("[^0-9]", "");
             String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
-            boolean match = elementDigits.length() >= 7 && sensitiveDigits.length() >= 7 &&
+            return elementDigits.length() >= 7 && sensitiveDigits.length() >= 7 &&
                     elementDigits.equals(sensitiveDigits);
-            if (match) {
-                Log.d(TAG, "   📞 Phone digits match: '" + elementText + "' -> '" + elementDigits + "'");
-            }
-            return match;
         }
 
-        // For credit cards - match by digits only
         if (type.contains("CREDIT_CARD")) {
             String elementDigits = elementText.replaceAll("[^0-9]", "");
             String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
-            boolean match = elementDigits.length() >= 13 && sensitiveDigits.length() >= 13 &&
+            return elementDigits.length() >= 13 && sensitiveDigits.length() >= 13 &&
                     elementDigits.equals(sensitiveDigits);
-            if (match) {
-                Log.d(TAG, "   💳 Credit card digits match: '" + elementText + "' -> '" + elementDigits + "'");
-            }
-            return match;
         }
 
-        // For emails - check for exact match or contains with @
         if (type.contains("EMAIL")) {
-            boolean match = (elementText.contains("@") && sensitiveValue.contains("@") &&
-                    normalizedElement.equals(normalizedSensitive)) ||
-                    (elementText.toLowerCase().contains(sensitiveValue.toLowerCase()) &&
-                            Math.abs(elementText.length() - sensitiveValue.length()) <= 2);
-            if (match) {
-                Log.d(TAG, "   📧 Email match: '" + elementText + "'");
-            }
-            return match;
+            return elementText.contains("@") && sensitiveValue.contains("@") &&
+                    normalizedElement.equals(normalizedSensitive);
         }
 
-        // For SSN and ID numbers - exact match or very close match
         if (type.contains("SSN") || type.contains("ID")) {
             String elementClean = elementText.replaceAll("[^0-9]", "");
             String sensitiveClean = sensitiveValue.replaceAll("[^0-9]", "");
-            boolean match = elementClean.equals(sensitiveClean) && elementClean.length() >= 9;
-            if (match) {
-                Log.d(TAG, "   🆔 ID/SSN match: '" + elementText + "' -> '" + elementClean + "'");
-            }
-            return match;
+            return elementClean.equals(sensitiveClean) && elementClean.length() >= 9;
         }
 
-        // For bank accounts - exact match or very close
         if (type.contains("BANK")) {
             String elementClean = elementText.replaceAll("[^0-9\\-]", "");
             String sensitiveClean = sensitiveValue.replaceAll("[^0-9\\-]", "");
-            boolean match = elementClean.equals(sensitiveClean) && elementClean.length() >= 8;
-            if (match) {
-                Log.d(TAG, "   🏦 Bank account match: '" + elementText + "' -> '" + elementClean + "'");
-            }
-            return match;
+            return elementClean.equals(sensitiveClean) && elementClean.length() >= 8;
         }
 
-        Log.d(TAG, "   ❌ No match for '" + sensitiveValue + "' in '" + elementText + "'");
         return false;
     }
 
     /**
-     * CALCULATE COMPLETE SENSITIVE DATA BOUNDARIES within an element
-     * FIXED: Only processes when we actually found the sensitive data
+     * Calculate character bounds within an element
      */
     private List<Rect> calculateCharacterBounds(String elementText, String sensitiveValue, Rect elementBounds, String type) {
         List<Rect> charBoxes = new ArrayList<>();
 
-        Log.d(TAG, "   📊 Element: '" + elementText + "'");
-        Log.d(TAG, "   📊 Sensitive: '" + sensitiveValue + "' (type: " + type + ")");
-
         int startIndex = findSensitiveDataStart(elementText, sensitiveValue, type);
-
         if (startIndex >= 0) {
-            int endIndex;
-
-            // Special handling for different data types to ensure complete coverage
-            if (type.contains("PHONE")) {
-                // For phones, cover from first digit to last digit (including formatting)
-                endIndex = findLastPhoneCharacter(elementText, startIndex);
-            } else if (type.contains("CREDIT_CARD")) {
-                // For credit cards, cover all digits and spaces
-                endIndex = findLastCreditCardCharacter(elementText, startIndex);
-            } else if (type.contains("EMAIL")) {
-                // For emails, cover the complete email address
-                endIndex = findEmailEnd(elementText, startIndex);
-            } else {
-                // For other types (SSN, ID), use the sensitive value length
-                endIndex = startIndex + sensitiveValue.length();
-            }
-
-            // Make sure we don't go beyond the element text length
+            int endIndex = findSensitiveDataEnd(elementText, sensitiveValue, startIndex, type);
             endIndex = Math.min(endIndex, elementText.length());
 
-            // Calculate the portion of the element bounds to censor
-            float elementWidth = elementBounds.width();
-            float elementTextLength = elementText.length();
+            if (startIndex < endIndex) {
+                float elementWidth = elementBounds.width();
+                float elementTextLength = elementText.length();
 
-            if (elementTextLength > 0) {
-                float charWidth = elementWidth / elementTextLength;
+                if (elementTextLength > 0) {
+                    float charWidth = elementWidth / elementTextLength;
 
-                int leftOffset = (int) (startIndex * charWidth);
-                int rightOffset = (int) (endIndex * charWidth);
+                    int leftOffset = (int) (startIndex * charWidth);
+                    int rightOffset = (int) (endIndex * charWidth);
 
-                // Add padding to ensure complete coverage
-                int padding = Math.max(2, (int) (charWidth * 0.3));
+                    int padding = Math.max(2, (int) (charWidth * 0.3));
 
-                Rect charRect = new Rect(
-                        Math.max(elementBounds.left, elementBounds.left + leftOffset - padding),
-                        elementBounds.top,
-                        Math.min(elementBounds.right, elementBounds.left + rightOffset + padding),
-                        elementBounds.bottom
-                );
+                    Rect charRect = new Rect(
+                            Math.max(elementBounds.left, elementBounds.left + leftOffset - padding),
+                            elementBounds.top,
+                            Math.min(elementBounds.right, elementBounds.left + rightOffset + padding),
+                            elementBounds.bottom
+                    );
 
-                charBoxes.add(charRect);
-                Log.d(TAG, "   🎯 Complete " + type + " bounds: " + charRect.toString());
-                Log.d(TAG, "   📏 Covering characters " + startIndex + " to " + endIndex + " ('" +
-                        elementText.substring(startIndex, endIndex) + "')");
+                    charBoxes.add(charRect);
+                }
             }
-        } else {
-            // ✅ FIXED: Don't censor if we can't find the sensitive data
-            Log.d(TAG, "   ❌ No precise match found - skipping element");
         }
 
         return charBoxes;
     }
 
+    /**
+     * Find starting position of sensitive data
+     */
+    private int findSensitiveDataStart(String elementText, String sensitiveValue, String type) {
+        if (elementText == null || sensitiveValue == null) return -1;
+
+        // Try exact match first
+        int exactIndex = elementText.indexOf(sensitiveValue);
+        if (exactIndex >= 0) {
+            return exactIndex;
+        }
+
+        // Try case-insensitive match
+        int caseIndex = elementText.toLowerCase().indexOf(sensitiveValue.toLowerCase());
+        if (caseIndex >= 0) {
+            return caseIndex;
+        }
+
+        // Type-specific matching for digits-only comparison
+        if (type.contains("PHONE") || type.contains("CREDIT_CARD")) {
+            String elementDigits = elementText.replaceAll("[^0-9]", "");
+            String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
+
+            if (elementDigits.equals(sensitiveDigits)) {
+                // Find first digit
+                for (int i = 0; i < elementText.length(); i++) {
+                    if (Character.isDigit(elementText.charAt(i))) {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    /**
+     * Find ending position of sensitive data
+     */
+    private int findSensitiveDataEnd(String elementText, String sensitiveValue, int startIndex, String type) {
+        if (type.contains("PHONE")) {
+            return findLastPhoneCharacter(elementText, startIndex);
+        } else if (type.contains("CREDIT_CARD")) {
+            return findLastCreditCardCharacter(elementText, startIndex);
+        } else if (type.contains("EMAIL")) {
+            return findEmailEnd(elementText, startIndex);
+        } else {
+            return startIndex + sensitiveValue.length();
+        }
+    }
+
+    /**
+     * Helper methods for finding data end positions
+     */
     private int findLastPhoneCharacter(String text, int startIndex) {
         int lastDigitIndex = startIndex;
         int digitCount = 0;
 
-        // Look for phone number pattern: find last digit, but include formatting
         for (int i = startIndex; i < text.length(); i++) {
             char c = text.charAt(i);
             if (Character.isDigit(c)) {
                 lastDigitIndex = i;
                 digitCount++;
             } else if (c == ' ' || c == '-' || c == '(' || c == ')' || c == '.') {
-                // Include formatting characters if they're between digits
                 if (i < text.length() - 1 && hasMoreDigitsAhead(text, i + 1)) {
                     continue;
                 } else if (digitCount >= 7) {
-                    // We have enough digits, stop here
                     break;
                 }
             } else {
-                // Non-phone character, stop if we have enough digits
                 if (digitCount >= 7) break;
             }
         }
@@ -563,9 +592,6 @@ public class ScreenshotProcessor {
         return lastDigitIndex + 1;
     }
 
-    /**
-     * Find the end of a credit card number (including spaces and dashes)
-     */
     private int findLastCreditCardCharacter(String text, int startIndex) {
         int lastIndex = startIndex;
         int digitCount = 0;
@@ -576,14 +602,12 @@ public class ScreenshotProcessor {
                 lastIndex = i;
                 digitCount++;
             } else if (c == ' ' || c == '-') {
-                // Include formatting characters
                 if (hasMoreDigitsAhead(text, i + 1)) {
                     lastIndex = i;
                 } else if (digitCount >= 13) {
                     break;
                 }
             } else {
-                // Non-card character
                 if (digitCount >= 13) break;
             }
         }
@@ -591,9 +615,6 @@ public class ScreenshotProcessor {
         return lastIndex + 1;
     }
 
-    /**
-     * Find the end of an email address
-     */
     private int findEmailEnd(String text, int startIndex) {
         int endIndex = startIndex;
         boolean foundAt = false;
@@ -606,10 +627,8 @@ public class ScreenshotProcessor {
             } else if (Character.isLetterOrDigit(c) || c == '.' || c == '-' || c == '_' || c == '+') {
                 endIndex = i;
             } else if (foundAt && (c == ' ' || c == '\t' || c == '\n')) {
-                // Stop at whitespace after @ and domain
                 break;
             } else if (!foundAt && (c == ' ' || c == '\t' || c == '\n')) {
-                // Stop at whitespace before @
                 break;
             }
         }
@@ -617,9 +636,6 @@ public class ScreenshotProcessor {
         return endIndex + 1;
     }
 
-    /**
-     * Check if there are more digits ahead in the text
-     */
     private boolean hasMoreDigitsAhead(String text, int fromIndex) {
         for (int i = fromIndex; i < Math.min(fromIndex + 5, text.length()); i++) {
             if (Character.isDigit(text.charAt(i))) {
@@ -630,119 +646,8 @@ public class ScreenshotProcessor {
     }
 
     /**
-     * Find the starting position of sensitive data in the element text
+     * File operations - saving, deleting, MediaStore management
      */
-    private int findSensitiveDataStart(String elementText, String sensitiveValue, String type) {
-        if (elementText == null || sensitiveValue == null) return -1;
-
-        // Try exact match first
-        int exactIndex = elementText.indexOf(sensitiveValue);
-        if (exactIndex >= 0) {
-            Log.d(TAG, "   ✅ Found exact match at index " + exactIndex);
-            return exactIndex;
-        }
-
-        // Try case-insensitive match
-        int caseIndex = elementText.toLowerCase().indexOf(sensitiveValue.toLowerCase());
-        if (caseIndex >= 0) {
-            Log.d(TAG, "   ✅ Found case-insensitive match at index " + caseIndex);
-            return caseIndex;
-        }
-
-        // For phone numbers, try matching by digits pattern
-        if (type.contains("PHONE")) {
-            String elementDigits = elementText.replaceAll("[^0-9]", "");
-            String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
-
-            if (elementDigits.equals(sensitiveDigits) ||
-                    (elementDigits.length() >= 7 && sensitiveDigits.length() >= 7 &&
-                            (elementDigits.contains(sensitiveDigits) || sensitiveDigits.contains(elementDigits)))) {
-
-                // For phone numbers, if digits match, cover from first digit
-                for (int i = 0; i < elementText.length(); i++) {
-                    if (Character.isDigit(elementText.charAt(i))) {
-                        Log.d(TAG, "   📞 Phone digits match - starting from " + i);
-                        return i;
-                    }
-                }
-            }
-        }
-
-        // For credit cards, match by digits
-        if (type.contains("CREDIT_CARD")) {
-            String elementDigits = elementText.replaceAll("[^0-9]", "");
-            String sensitiveDigits = sensitiveValue.replaceAll("[^0-9]", "");
-
-            if (elementDigits.equals(sensitiveDigits)) {
-                // Cover from first digit
-                for (int i = 0; i < elementText.length(); i++) {
-                    if (Character.isDigit(elementText.charAt(i))) {
-                        Log.d(TAG, "   💳 Credit card digits match - starting from " + i);
-                        return i;
-                    }
-                }
-            }
-        }
-
-        // For emails, find the @ symbol and work backwards/forwards
-        if (type.contains("EMAIL")) {
-            String lowerElement = elementText.toLowerCase();
-            String lowerSensitive = sensitiveValue.toLowerCase();
-
-            int atIndex = lowerElement.indexOf("@");
-            if (atIndex >= 0 && lowerSensitive.contains("@")) {
-                // Find the start of the email by looking backwards from @
-                int emailStart = atIndex;
-                while (emailStart > 0) {
-                    char c = elementText.charAt(emailStart - 1);
-                    if (Character.isLetterOrDigit(c) || c == '.' || c == '_' || c == '-' || c == '+') {
-                        emailStart--;
-                    } else {
-                        break;
-                    }
-                }
-                Log.d(TAG, "   📧 Email found starting from " + emailStart);
-                return emailStart;
-            }
-        }
-
-        Log.d(TAG, "   ❌ No match found for '" + sensitiveValue + "' in '" + elementText + "'");
-        return -1;
-    }
-
-    private Bitmap fixImageOrientation(Bitmap bitmap, String imagePath) {
-        try {
-            ExifInterface exif = new ExifInterface(imagePath);
-            int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
-
-            if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
-                return bitmap;
-            }
-
-            Matrix matrix = new Matrix();
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90:
-                    matrix.postRotate(90);
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_180:
-                    matrix.postRotate(180);
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_270:
-                    matrix.postRotate(270);
-                    break;
-                default:
-                    return bitmap;
-            }
-
-            Bitmap rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-            return rotatedBitmap != null ? rotatedBitmap : bitmap;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error fixing image orientation", e);
-            return bitmap;
-        }
-    }
-
     private String saveCensoredImage(Bitmap censoredBitmap, String originalPath, MediaObserver.ImageType imageType) {
         if (censoredBitmap == null || censoredBitmap.isRecycled()) {
             return null;
@@ -780,15 +685,6 @@ public class ScreenshotProcessor {
         }
     }
 
-    private boolean handleOriginalImage(String imagePath, MediaObserver.ImageType imageType) {
-        try {
-            return deleteOriginalImage(imagePath);
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling original image", e);
-            return false;
-        }
-    }
-
     private boolean deleteOriginalImage(String imagePath) {
         try {
             File originalFile = new File(imagePath);
@@ -814,6 +710,47 @@ public class ScreenshotProcessor {
         }
     }
 
+    private Bitmap fixImageOrientation(Bitmap bitmap, String imagePath) {
+        try {
+            ExifInterface exif = new ExifInterface(imagePath);
+            int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+
+            if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
+                return bitmap;
+            }
+
+            Matrix matrix = new Matrix();
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    matrix.postRotate(90);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    matrix.postRotate(180);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    matrix.postRotate(270);
+                    break;
+                default:
+                    return bitmap;
+            }
+
+            Bitmap rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            return rotatedBitmap != null ? rotatedBitmap : bitmap;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error fixing image orientation", e);
+            return bitmap;
+        }
+    }
+
+    /**
+     * Utility methods
+     */
+    private String normalizeText(String text) {
+        if (text == null) return "";
+        return text.replaceAll("\\s+", "").toLowerCase();
+    }
+
     private int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
         final int height = options.outHeight;
         final int width = options.outWidth;
@@ -837,18 +774,11 @@ public class ScreenshotProcessor {
                 rect.width() > 0 && rect.height() > 0;
     }
 
-    private String maskSensitiveValue(String value, String type) {
-        if (value == null || value.length() < 4) return "***";
-
-        switch (type) {
-            case "CREDIT_CARD":
-                return value.substring(0, 4) + " **** **** " + value.substring(value.length() - 4);
-            case "US_SSN":
-                return "***-**-****";
-            case "ISRAELI_ID":
-                return "***-***-***";
-            default:
-                return "***";
-        }
+    /**
+     * Cleanup resources
+     */
+    public void cleanup() {
+        // ScreenshotProcessor doesn't hold long-term resources, but good practice
+        Log.d(TAG, "ScreenshotProcessor cleanup completed");
     }
 }

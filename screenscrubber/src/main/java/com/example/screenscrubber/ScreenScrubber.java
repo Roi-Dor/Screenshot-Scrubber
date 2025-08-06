@@ -4,16 +4,18 @@ import android.content.Context;
 import android.util.Log;
 
 /**
- * Simplified ScreenScrubber API - removed statistics, testing, and scan recent features
+ * Clean ScreenScrubber API - Configuration and lifecycle management only
  */
 public class ScreenScrubber {
     private static final String TAG = "ScreenScrubber";
 
-    private ScreenScrubberManager manager;
+    private final ScreenScrubberManager manager;
+    private final Context context;
+
+    // Configuration state - only place these are managed
     private boolean isActive = false;
     private boolean monitoringScreenshots = false;
     private boolean monitoringPhotos = false;
-    private Context context;
 
     public ScreenScrubber(Context context) {
         if (context == null) {
@@ -42,18 +44,21 @@ public class ScreenScrubber {
             return true;
         }
 
-        if (!isHealthy()) {
-            Log.e(TAG, "ScreenScrubber is not healthy, cannot start");
-            return false;
-        }
-
         if (!screenshots && !photos) {
             Log.e(TAG, "At least one monitoring type must be enabled");
             return false;
         }
 
+        if (!manager.isHealthy()) {
+            Log.e(TAG, "ScreenScrubber is not healthy, cannot start");
+            return false;
+        }
+
         try {
+            // Pass configuration to manager
             manager.startMonitoring(screenshots, photos);
+
+            // Update our state
             isActive = true;
             monitoringScreenshots = screenshots;
             monitoringPhotos = photos;
@@ -77,12 +82,16 @@ public class ScreenScrubber {
 
         try {
             manager.stopMonitoring();
+
+            // Reset state
             isActive = false;
             monitoringScreenshots = false;
             monitoringPhotos = false;
+
             Log.i(TAG, "ScreenScrubber protection stopped");
         } catch (Exception e) {
             Log.e(TAG, "Error stopping ScreenScrubber", e);
+            // Reset state even on error
             isActive = false;
             monitoringScreenshots = false;
             monitoringPhotos = false;
@@ -104,52 +113,37 @@ public class ScreenScrubber {
         }
 
         try {
-            manager.setMonitoringOptions(screenshots, photos);
+            manager.updateMonitoringOptions(screenshots, photos);
+
+            // Update our configuration
             monitoringScreenshots = screenshots;
             monitoringPhotos = photos;
+
             Log.i(TAG, "Monitoring options updated - Screenshots: " + screenshots + ", Photos: " + photos);
         } catch (Exception e) {
             Log.e(TAG, "Error updating monitoring options", e);
         }
     }
 
-    /**
-     * Check if protection is currently active
-     */
+    // Configuration getters - single source of truth
     public boolean isActive() {
-        return isActive && isHealthy();
+        return isActive && manager.isHealthy();
     }
 
-    /**
-     * Check if screenshot monitoring is enabled
-     */
     public boolean isMonitoringScreenshots() {
         return isActive && monitoringScreenshots;
     }
 
-    /**
-     * Check if photo monitoring is enabled
-     */
     public boolean isMonitoringPhotos() {
         return isActive && monitoringPhotos;
     }
 
-    /**
-     * Check if the ScreenScrubber is in a healthy state
-     */
-    public boolean isHealthy() {
-        return manager != null && manager.isHealthy();
-    }
-
-    /**
-     * Get monitoring configuration
-     */
     public MonitoringConfig getMonitoringConfig() {
         return new MonitoringConfig(
                 isActive,
                 monitoringScreenshots,
                 monitoringPhotos,
-                isHealthy()
+                manager.isHealthy()
         );
     }
 
@@ -161,9 +155,7 @@ public class ScreenScrubber {
 
         try {
             stop();
-            if (manager != null) {
-                manager.cleanup();
-            }
+            manager.cleanup();
         } catch (Exception e) {
             Log.e(TAG, "Error during ScreenScrubber cleanup", e);
         } finally {
@@ -174,7 +166,7 @@ public class ScreenScrubber {
         }
     }
 
-    // Monitoring configuration class
+    // Configuration data class
     public static class MonitoringConfig {
         public final boolean isActive;
         public final boolean monitoringScreenshots;
@@ -200,7 +192,7 @@ public class ScreenScrubber {
      * Get library version info
      */
     public static LibraryInfo getLibraryInfo() {
-        return new LibraryInfo("2.0.0", "Simplified", System.currentTimeMillis());
+        return new LibraryInfo("2.1.0", "Refactored", System.currentTimeMillis());
     }
 
     public static class LibraryInfo {
@@ -209,12 +201,9 @@ public class ScreenScrubber {
         public final long buildTime;
 
         public LibraryInfo(String version, String buildType, long buildTime) {
-            long buildTime1;
             this.version = version;
             this.buildType = buildType;
-            buildTime1 = Long.parseLong(buildType);
-            buildTime1 = buildTime;
-            this.buildTime = buildTime1;
+            this.buildTime = buildTime;
         }
 
         @Override

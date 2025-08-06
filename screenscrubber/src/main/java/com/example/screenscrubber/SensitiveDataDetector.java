@@ -34,7 +34,7 @@ public class SensitiveDataDetector {
 
     // IMPROVED OCR-TOLERANT PATTERNS
     private static final Pattern CREDIT_CARD_PATTERN =
-            Pattern.compile("(?:\\d[\\s-]*){13,19}");
+            Pattern.compile("\\b(?:\\d[\\s-]*){13,19}\\b|\\b\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}\\b");
 
     private static final Pattern US_SSN_PATTERN =
             Pattern.compile("\\b\\d{3}[-\\s]\\d{2}[-\\s]\\d{4}\\b");

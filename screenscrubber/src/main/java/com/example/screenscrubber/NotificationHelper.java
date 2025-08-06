@@ -6,22 +6,29 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.util.Log;
+import android.widget.Toast;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import java.util.List;
 
 /**
- * Simplified notification helper for ScreenScrubber
+ * ALL user communication - notifications, toasts, error messages
+ * Single responsibility: User interface and feedback
  */
 public class NotificationHelper {
     private static final String TAG = "NotificationHelper";
     private static final String CHANNEL_ID = "screen_scrubber_alerts";
     private static final String CHANNEL_NAME = "Screen Protection";
-    private static final int NOTIFICATION_ID = 1001;
 
-    private Context context;
-    private NotificationManagerCompat notificationManager;
+    // Different notification IDs for different types
+    private static final int SENSITIVE_DATA_NOTIFICATION_ID = 1001;
+    private static final int CLEAN_IMAGE_NOTIFICATION_ID = 1002;
+    private static final int ERROR_NOTIFICATION_ID = 1003;
+    private static final int SYSTEM_ERROR_NOTIFICATION_ID = 1004;
+
+    private final Context context;
+    private final NotificationManagerCompat notificationManager;
 
     public NotificationHelper(Context context) {
         this.context = context;
@@ -59,7 +66,8 @@ public class NotificationHelper {
      */
     public void showDetailedSensitiveDataAlert(List<SensitiveDataDetector.SensitiveMatch> matches, String imageType) {
         if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show alert");
+            Log.w(TAG, "No notification permission - showing toast instead");
+            showSensitiveDataToast(matches.size(), imageType);
             return;
         }
 
@@ -98,10 +106,11 @@ public class NotificationHelper {
                 .setAutoCancel(true);
 
         try {
-            notificationManager.notify(NOTIFICATION_ID, builder.build());
+            notificationManager.notify(SENSITIVE_DATA_NOTIFICATION_ID, builder.build());
             Log.d(TAG, "Detailed sensitive data notification sent for " + imageType);
         } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show notification - permission denied", e);
+            Log.e(TAG, "Failed to show notification - permission denied, showing toast", e);
+            showSensitiveDataToast(matches.size(), imageType);
         }
     }
 
@@ -110,7 +119,8 @@ public class NotificationHelper {
      */
     public void showCleanImageNotification(String imageType) {
         if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show clean image notification");
+            Log.w(TAG, "No notification permission - showing toast instead");
+            showCleanImageToast(imageType);
             return;
         }
 
@@ -125,19 +135,21 @@ public class NotificationHelper {
                 .setAutoCancel(true);
 
         try {
-            notificationManager.notify(NOTIFICATION_ID, builder.build());
+            notificationManager.notify(CLEAN_IMAGE_NOTIFICATION_ID, builder.build());
             Log.d(TAG, "Clean " + imageType + " notification sent");
         } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show notification - permission denied", e);
+            Log.e(TAG, "Failed to show notification - permission denied, showing toast", e);
+            showCleanImageToast(imageType);
         }
     }
 
     /**
-     * Show error notification
+     * Show error notification - CENTRALIZED error handling
      */
     public void showErrorNotification(String errorMessage, String imageType) {
         if (!hasNotificationPermission()) {
-            Log.w(TAG, "No notification permission - cannot show error notification");
+            Log.w(TAG, "No notification permission - showing toast instead");
+            showErrorToast(errorMessage, imageType);
             return;
         }
 
@@ -154,10 +166,125 @@ public class NotificationHelper {
                 .setAutoCancel(true);
 
         try {
-            notificationManager.notify(NOTIFICATION_ID + 3, builder.build());
-            Log.d(TAG, "Error notification sent");
+            notificationManager.notify(ERROR_NOTIFICATION_ID, builder.build());
+            Log.d(TAG, "Error notification sent: " + errorMessage);
         } catch (SecurityException e) {
-            Log.e(TAG, "Failed to show error notification - permission denied", e);
+            Log.e(TAG, "Failed to show error notification - permission denied, showing toast", e);
+            showErrorToast(errorMessage, imageType);
+        }
+    }
+
+    /**
+     * Show system error notification (for startup/configuration issues)
+     */
+    public void showSystemErrorNotification(String errorMessage) {
+        if (!hasNotificationPermission()) {
+            Log.w(TAG, "No notification permission - showing toast instead");
+            showSystemErrorToast(errorMessage);
+            return;
+        }
+
+        String title = "⚠️ ScreenScrubber Error";
+        String contentText = "System error occurred";
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle(title)
+                .setContentText(contentText)
+                .setStyle(new NotificationCompat.BigTextStyle()
+                        .bigText("ScreenScrubber system error: " + errorMessage))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true);
+
+        try {
+            notificationManager.notify(SYSTEM_ERROR_NOTIFICATION_ID, builder.build());
+            Log.d(TAG, "System error notification sent: " + errorMessage);
+        } catch (SecurityException e) {
+            Log.e(TAG, "Failed to show system error notification - permission denied, showing toast", e);
+            showSystemErrorToast(errorMessage);
+        }
+    }
+
+    /**
+     * FALLBACK: Toast messages when notifications aren't available
+     */
+    private void showSensitiveDataToast(int matchCount, String imageType) {
+        try {
+            runOnUiThread(() -> {
+                String message = "🛡️ " + matchCount + " sensitive items found in " + imageType.toLowerCase() + " - Protected!";
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing sensitive data toast", e);
+        }
+    }
+
+    private void showCleanImageToast(String imageType) {
+        try {
+            runOnUiThread(() -> {
+                String message = "✅ " + imageType + " is clean - No sensitive data found";
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing clean image toast", e);
+        }
+    }
+
+    private void showErrorToast(String errorMessage, String imageType) {
+        try {
+            runOnUiThread(() -> {
+                String message = "❌ Error processing " + imageType.toLowerCase() + ": " + errorMessage;
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing error toast", e);
+        }
+    }
+
+    private void showSystemErrorToast(String errorMessage) {
+        try {
+            runOnUiThread(() -> {
+                String message = "⚠️ ScreenScrubber Error: " + errorMessage;
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing system error toast", e);
+        }
+    }
+
+    /**
+     * Generic toast method for other components to use
+     */
+    public void showToast(String message) {
+        try {
+            runOnUiThread(() -> {
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing generic toast", e);
+        }
+    }
+
+    public void showToast(String message, boolean isLong) {
+        try {
+            runOnUiThread(() -> {
+                int duration = isLong ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT;
+                Toast.makeText(context, message, duration).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error showing generic toast", e);
+        }
+    }
+
+    /**
+     * Ensure UI operations run on main thread
+     */
+    private void runOnUiThread(Runnable action) {
+        if (context instanceof android.app.Activity) {
+            ((android.app.Activity) context).runOnUiThread(action);
+        } else {
+            // Fallback: post to main looper
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(action);
         }
     }
 
@@ -170,6 +297,28 @@ public class NotificationHelper {
             Log.d(TAG, "All notifications cleared");
         } catch (Exception e) {
             Log.e(TAG, "Error clearing notifications", e);
+        }
+    }
+
+    /**
+     * Clear specific notification types
+     */
+    public void clearSensitiveDataNotifications() {
+        try {
+            notificationManager.cancel(SENSITIVE_DATA_NOTIFICATION_ID);
+            Log.d(TAG, "Sensitive data notifications cleared");
+        } catch (Exception e) {
+            Log.e(TAG, "Error clearing sensitive data notifications", e);
+        }
+    }
+
+    public void clearErrorNotifications() {
+        try {
+            notificationManager.cancel(ERROR_NOTIFICATION_ID);
+            notificationManager.cancel(SYSTEM_ERROR_NOTIFICATION_ID);
+            Log.d(TAG, "Error notifications cleared");
+        } catch (Exception e) {
+            Log.e(TAG, "Error clearing error notifications", e);
         }
     }
 
