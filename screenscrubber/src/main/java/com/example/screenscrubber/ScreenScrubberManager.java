@@ -4,39 +4,34 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.widget.Toast;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Simplified manager - removed statistics and scan recent functionality
+ * Workflow coordinator - manages the processing pipeline only
+ * NO configuration management, NO error UI, NO file validation
  */
 public class ScreenScrubberManager {
     private static final String TAG = "ScreenScrubberManager";
     private static final long PROCESSING_TIMEOUT_MS = 30000;
 
-    private MediaObserver mediaObserver;
-    private TextRecognitionService textService;
-    private ScreenshotProcessor screenshotProcessor;
-    private NotificationHelper notificationHelper;
-    private Context context;
+    private final MediaObserver mediaObserver;
+    private final TextRecognitionService textService;
+    private final ScreenshotProcessor screenshotProcessor;
+    private final NotificationHelper notificationHelper;
+    private final Context context;
 
     // Background processing
     private ExecutorService processingExecutor;
     private Handler mainHandler;
 
-    // Configuration
-    private boolean monitorScreenshots = true;
-    private boolean monitorCameraPhotos = true;
-
     public ScreenScrubberManager(Context context) {
         this.context = context;
         this.mediaObserver = new MediaObserver(context);
         this.textService = new TextRecognitionService();
-        this.screenshotProcessor = new ScreenshotProcessor();
-        this.screenshotProcessor.setContext(context);
+        this.screenshotProcessor = new ScreenshotProcessor(context);
         this.notificationHelper = new NotificationHelper(context);
 
         // Initialize background processing
@@ -51,27 +46,20 @@ public class ScreenScrubberManager {
     }
 
     /**
-     * Start monitoring with configuration options
+     * Start monitoring with given configuration
      */
-    public void startMonitoring() {
-        startMonitoring(true, true);
-    }
-
     public void startMonitoring(boolean screenshots, boolean cameraPhotos) {
-        this.monitorScreenshots = screenshots;
-        this.monitorCameraPhotos = cameraPhotos;
-
         try {
             mediaObserver.startMonitoring(new MediaObserver.MediaListener() {
                 @Override
                 public void onNewImage(String filePath, MediaObserver.ImageType type) {
                     Log.i(TAG, "New image detected: " + type + " - " + filePath);
 
+                    // Check if we should process this image type
                     boolean shouldProcess = false;
-
-                    if (type == MediaObserver.ImageType.SCREENSHOT && monitorScreenshots) {
+                    if (type == MediaObserver.ImageType.SCREENSHOT && screenshots) {
                         shouldProcess = true;
-                    } else if (type == MediaObserver.ImageType.CAMERA_PHOTO && monitorCameraPhotos) {
+                    } else if (type == MediaObserver.ImageType.CAMERA_PHOTO && cameraPhotos) {
                         shouldProcess = true;
                     }
 
@@ -85,10 +73,14 @@ public class ScreenScrubberManager {
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to start monitoring", e);
-            showErrorToast("Failed to start monitoring: " + e.getMessage());
+            // Let NotificationHelper handle all user-facing errors
+            notificationHelper.showErrorNotification("Failed to start monitoring: " + e.getMessage(), "System");
         }
     }
 
+    /**
+     * Stop monitoring
+     */
     public void stopMonitoring() {
         try {
             mediaObserver.stopMonitoring();
@@ -99,7 +91,16 @@ public class ScreenScrubberManager {
     }
 
     /**
-     * Process image asynchronously with timeout
+     * Update monitoring options (pass-through to MediaObserver)
+     */
+    public void updateMonitoringOptions(boolean screenshots, boolean cameraPhotos) {
+        // MediaObserver doesn't need to restart - it just filters differently
+        Log.d(TAG, "Monitoring options updated - Screenshots: " + screenshots + ", Camera: " + cameraPhotos);
+        // The filtering happens in the listener above, so no action needed here
+    }
+
+    /**
+     * Process image asynchronously with timeout - pure workflow coordination
      */
     private void processImageAsync(String filePath, MediaObserver.ImageType imageType) {
         if (processingExecutor.isShutdown()) {
@@ -119,14 +120,15 @@ public class ScreenScrubberManager {
                 if (!processingTask.isDone()) {
                     Log.e(TAG, "Image processing timed out for: " + filePath);
                     processingTask.cancel(true);
-                    showErrorToast("Image processing timed out");
+                    mainHandler.post(() -> notificationHelper.showErrorNotification("Processing timed out",
+                            imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo"));
                 }
             }
         });
     }
 
     /**
-     * Internal processing method that runs on background thread
+     * Internal processing pipeline - coordinates the workflow
      */
     private void processImageInternal(String filePath, MediaObserver.ImageType imageType) {
         long startTime = System.currentTimeMillis();
@@ -134,13 +136,7 @@ public class ScreenScrubberManager {
         Log.d(TAG, "Starting processing for " + imageType + ": " + filePath);
 
         try {
-            // Validate file before processing
-            if (!validateImageFile(filePath)) {
-                Log.w(TAG, "Image file validation failed: " + filePath);
-                return;
-            }
-
-            // Extract text with ML Kit
+            // Step 1: Extract text with ML Kit
             textService.extractTextFromImage(filePath, new TextRecognitionService.TextExtractionCallback() {
                 @Override
                 public void onTextExtracted(com.google.mlkit.vision.text.Text visionText, String imagePath) {
@@ -148,23 +144,20 @@ public class ScreenScrubberManager {
                     Log.d(TAG, "Text extraction completed in " + extractionTime + "ms");
 
                     try {
-                        // Process the image
+                        // Step 2: Process the image (validate, detect, censor)
                         ScreenshotProcessor.ProcessingResult result =
                                 screenshotProcessor.processImage(imagePath, visionText, imageType);
 
                         long totalTime = System.currentTimeMillis() - startTime;
 
-                        if (result.success) {
-                            Log.d(TAG, "Image processing completed successfully in " + totalTime + "ms");
-                            mainHandler.post(() -> handleProcessingResult(result, imageType));
-                        } else {
-                            Log.e(TAG, "Image processing failed: " + result.errorMessage);
-                            mainHandler.post(() -> showErrorToast("Processing failed: " + result.errorMessage));
-                        }
+                        // Step 3: Handle the result on main thread
+                        mainHandler.post(() -> handleProcessingResult(result, imageType, totalTime));
 
                     } catch (Exception e) {
                         Log.e(TAG, "Error in image processing", e);
-                        mainHandler.post(() -> showErrorToast("Processing error: " + e.getMessage()));
+                        mainHandler.post(() -> notificationHelper.showErrorNotification(
+                                "Processing error: " + e.getMessage(),
+                                imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo"));
                     }
                 }
 
@@ -172,63 +165,35 @@ public class ScreenScrubberManager {
                 public void onExtractionError(String error, String imagePath) {
                     long failedTime = System.currentTimeMillis() - startTime;
                     Log.e(TAG, "Text extraction failed after " + failedTime + "ms: " + error);
-                    mainHandler.post(() -> showErrorToast("Text extraction failed: " + error));
+                    mainHandler.post(() -> notificationHelper.showErrorNotification(
+                            "Text extraction failed: " + error,
+                            imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo"));
                 }
             });
 
         } catch (Exception e) {
             Log.e(TAG, "Unexpected error in processImageInternal", e);
-            mainHandler.post(() -> showErrorToast("Unexpected processing error"));
+            mainHandler.post(() -> notificationHelper.showErrorNotification(
+                    "Unexpected processing error",
+                    imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo"));
         }
     }
 
     /**
-     * Validate image file before processing
+     * Handle the final result - delegate to NotificationHelper
      */
-    private boolean validateImageFile(String filePath) {
+    private void handleProcessingResult(ScreenshotProcessor.ProcessingResult result,
+                                        MediaObserver.ImageType imageType, long processingTime) {
         try {
-            java.io.File file = new java.io.File(filePath);
+            String imageTypeStr = imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo";
 
-            if (!file.exists()) {
-                Log.w(TAG, "Image file does not exist: " + filePath);
-                return false;
-            }
+            Log.d(TAG, imageTypeStr + " processing completed in " + processingTime + "ms - Success: " + result.success);
 
-            if (!file.canRead()) {
-                Log.w(TAG, "Cannot read image file: " + filePath);
-                return false;
-            }
-
-            if (file.length() == 0) {
-                Log.w(TAG, "Image file is empty: " + filePath);
-                return false;
-            }
-
-            if (file.length() > 50 * 1024 * 1024) { // 50MB max
-                Log.w(TAG, "Image file too large: " + file.length() + " bytes");
-                return false;
-            }
-
-            return true;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error validating image file", e);
-            return false;
-        }
-    }
-
-    /**
-     * Handle the final result and show appropriate notification
-     */
-    private void handleProcessingResult(ScreenshotProcessor.ProcessingResult result, MediaObserver.ImageType imageType) {
-        try {
             if (!result.success) {
                 Log.e(TAG, "Processing result indicates failure: " + result.errorMessage);
-                showErrorToast("Processing failed: " + result.errorMessage);
+                notificationHelper.showErrorNotification("Processing failed: " + result.errorMessage, imageTypeStr);
                 return;
             }
-
-            String imageTypeStr = imageType == MediaObserver.ImageType.SCREENSHOT ? "Screenshot" : "Photo";
 
             if (!result.hasSensitiveData) {
                 Log.d(TAG, "No sensitive data found in " + imageTypeStr.toLowerCase());
@@ -249,40 +214,8 @@ public class ScreenScrubberManager {
 
         } catch (Exception e) {
             Log.e(TAG, "Error handling processing result", e);
-            showErrorToast("Error displaying result");
+            notificationHelper.showErrorNotification("Error displaying result", "System");
         }
-    }
-
-    /**
-     * Show error toast
-     */
-    private void showErrorToast(String message) {
-        try {
-            if (context instanceof android.app.Activity) {
-                ((android.app.Activity) context).runOnUiThread(() -> {
-                    Toast.makeText(context, "❌ " + message, Toast.LENGTH_LONG).show();
-                });
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error showing toast", e);
-        }
-    }
-
-    /**
-     * Configuration methods
-     */
-    public void setMonitoringOptions(boolean screenshots, boolean cameraPhotos) {
-        this.monitorScreenshots = screenshots;
-        this.monitorCameraPhotos = cameraPhotos;
-        Log.d(TAG, "Monitoring options updated - Screenshots: " + screenshots + ", Camera: " + cameraPhotos);
-    }
-
-    public boolean isMonitoringScreenshots() {
-        return monitorScreenshots;
-    }
-
-    public boolean isMonitoringCameraPhotos() {
-        return monitorCameraPhotos;
     }
 
     /**
@@ -298,7 +231,7 @@ public class ScreenScrubberManager {
     }
 
     /**
-     * Cleanup resources
+     * Cleanup resources - coordinate cleanup of all components
      */
     public void cleanup() {
         Log.d(TAG, "Starting cleanup");
@@ -308,6 +241,10 @@ public class ScreenScrubberManager {
 
             if (textService != null) {
                 textService.cleanup();
+            }
+
+            if (screenshotProcessor != null) {
+                screenshotProcessor.cleanup();
             }
 
             if (processingExecutor != null && !processingExecutor.isShutdown()) {

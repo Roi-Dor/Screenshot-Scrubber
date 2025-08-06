@@ -11,18 +11,18 @@ import android.provider.MediaStore;
 import android.util.Log;
 
 /**
- * Enhanced observer that monitors both screenshots and camera photos
- * Uses MediaStore to be compatible with Android 10+ scoped storage
- * FIXED: Prevents re-processing of censored images
+ * Image detection ONLY - monitors MediaStore for new images
+ * NO configuration management, NO file validation, NO overlap checking
  */
 public class MediaObserver {
     private static final String TAG = "MediaObserver";
     private static final long NEW_IMAGE_THRESHOLD_MS = 10000; // 10 seconds
     private static final String CENSORED_FOLDER = "ScreenScrubber_Censored";
 
-    private Context context;
+    private final Context context;
+    private final Handler handler;
+
     private MediaListener listener;
-    private Handler handler;
     private ContentObserver mediaObserver;
     private boolean isMonitoring = false;
 
@@ -41,6 +41,9 @@ public class MediaObserver {
         this.handler = new Handler(Looper.getMainLooper());
     }
 
+    /**
+     * Start monitoring - pure detection responsibility
+     */
     public void startMonitoring(MediaListener listener) {
         if (isMonitoring) {
             Log.w(TAG, "Already monitoring media changes");
@@ -77,6 +80,9 @@ public class MediaObserver {
         }
     }
 
+    /**
+     * Stop monitoring
+     */
     public void stopMonitoring() {
         if (!isMonitoring) {
             return;
@@ -89,6 +95,7 @@ public class MediaObserver {
             }
 
             isMonitoring = false;
+            listener = null;
             Log.i(TAG, "Stopped monitoring media changes");
 
         } catch (Exception e) {
@@ -98,7 +105,7 @@ public class MediaObserver {
 
     /**
      * Check if a new image was added and determine its type
-     * FIXED: Skip our own censored images to prevent re-processing
+     * FOCUS: Just detect and classify, don't validate or filter
      */
     private void checkNewImage(Uri uri) {
         try {
@@ -128,23 +135,24 @@ public class MediaObserver {
 
                 cursor.close();
 
-                // CRITICAL FIX: Skip our own censored images
+                // CRITICAL: Skip our own censored images to prevent infinite loops
                 if (isOurCensoredImage(displayName, filePath, bucketName, relativePath)) {
-                    Log.d(TAG, "🚫 Ignoring our own censored image: " + displayName);
+                    Log.d(TAG, "Ignoring our own censored image: " + displayName);
                     return;
                 }
 
-                // Check if this is a recent image
+                // Check if this is a recent image (within threshold)
                 long currentTime = System.currentTimeMillis() / 1000; // MediaStore uses seconds
                 if (currentTime - dateAdded <= NEW_IMAGE_THRESHOLD_MS / 1000) {
 
                     ImageType imageType = determineImageType(displayName, filePath, bucketName, relativePath);
 
+                    // Only notify for images we care about
                     if (imageType == ImageType.SCREENSHOT || imageType == ImageType.CAMERA_PHOTO) {
                         Log.i(TAG, "New " + imageType + " detected: " + displayName);
 
                         if (listener != null && filePath != null) {
-                            // Add slight delay to ensure file is fully written
+                            // Small delay to ensure file is fully written
                             handler.postDelayed(() -> {
                                 listener.onNewImage(filePath, imageType);
                             }, 1000);
@@ -161,7 +169,7 @@ public class MediaObserver {
     }
 
     /**
-     * CRITICAL: Check if this is one of our censored images to prevent re-processing
+     * Check if this is one of our censored images - prevent reprocessing
      */
     private boolean isOurCensoredImage(String displayName, String filePath, String bucketName, String relativePath) {
         if (displayName == null) displayName = "";
@@ -186,7 +194,7 @@ public class MediaObserver {
     }
 
     /**
-     * Determine if an image is a screenshot, camera photo, or other
+     * Determine image type based on metadata - pure classification
      */
     private ImageType determineImageType(String displayName, String filePath, String bucketName, String relativePath) {
         if (displayName == null) displayName = "";
@@ -202,7 +210,6 @@ public class MediaObserver {
 
         Log.d(TAG, "Analyzing image:");
         Log.d(TAG, "  Display name: " + displayName);
-        Log.d(TAG, "  File path: " + filePath);
         Log.d(TAG, "  Bucket name: " + bucketName);
         Log.d(TAG, "  Relative path: " + relativePath);
 
@@ -220,7 +227,7 @@ public class MediaObserver {
     }
 
     /**
-     * Check if image is a screenshot
+     * Screenshot detection patterns
      */
     private boolean isScreenshot(String displayName, String filePath, String bucketName, String relativePath) {
         // Screenshot name patterns
@@ -257,7 +264,7 @@ public class MediaObserver {
     }
 
     /**
-     * Check if image is a camera photo
+     * Camera photo detection patterns
      */
     private boolean isCameraPhoto(String displayName, String filePath, String bucketName, String relativePath) {
         // Camera name patterns
@@ -299,7 +306,7 @@ public class MediaObserver {
     }
 
     /**
-     * Get recent images for initial scan
+     * Get recent images for initial scan - utility function
      */
     public void scanRecentImages(int limitHours) {
         try {
